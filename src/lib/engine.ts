@@ -103,7 +103,12 @@ export class AudioEngine {
     this.finished = false;
   }
 
-  /** Load an external stream. CORS-safe tracks route through the analyser. */
+  /**
+   * Load an external stream. The primary path is the same-origin proxy
+   * (`/api/stream`), which sidesteps upstream CORS entirely and keeps the
+   * analyser (visualizer) alive for every provider. The direct, plain
+   * element is only used as a fallback when the proxy itself fails.
+   */
   loadStream(t: StreamTrack) {
     this.stopAllVoices(0.05);
     this.stopTimer();
@@ -117,7 +122,11 @@ export class AudioEngine {
     this.finished = false;
     this.pauseStreamEls();
     const el = this.getEl(t.corsSafe);
-    el.src = t.streamUrl;
+    // proxied → same-origin → no CORS constraints, analyser works;
+    // direct → only as fallback (no analyser, but plays anything)
+    el.src = t.corsSafe
+      ? `/api/stream?url=${encodeURIComponent(t.streamUrl)}`
+      : t.streamUrl;
     el.load();
     if (t.corsSafe) {
       this.ensureCtx();

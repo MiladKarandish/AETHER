@@ -27,6 +27,19 @@ interface IaDoc {
 const first = (v: string | string[] | undefined) =>
   Array.isArray(v) ? v[0] : (v ?? "");
 
+/**
+ * The Archive's "audio" index is mostly NOT music: poetry readings,
+ * audiobooks, old-time radio dramas, lectures, nature sounds… Anything
+ * matching this pattern is dropped regardless of popularity.
+ */
+const JUNK_TITLE_RE =
+  /(poetry|poems?\b|episode|episodes|old ?time ?radio|radio (drama|program|show)|audio ?book|librivox|chapter \d|lecture|sermon|\binterview|short works|multilingual|sound ?effects|nature sounds?|white noise|meditation|asmr|language (lesson|course)|news)/i;
+
+const isMusic = (d: IaDoc) =>
+  d.identifier &&
+  !JUNK_TITLE_RE.test(first(d.title)) &&
+  (d.downloads ?? 0) >= 5000; // un-heard uploads are junk or broken derivatives
+
 const corsCache = new Map<string, boolean>();
 
 /** Cheap probe of one derivative file's CORS headers. */
@@ -69,20 +82,33 @@ function mapTrack(d: IaDoc, corsSafe: boolean): StreamTrack {
   };
 }
 
-async function query(params: string): Promise<StreamTrack[]> {
+async function query(params: string, opts?: { simple?: boolean }): Promise<StreamTrack[]> {
+  // Exclude the known spoken-word / non-music collections outright. The
+  // Archive's search backend is flaky and sometimes rejects the negation
+  // syntax — fall back to the plain query and let the code-level junk
+  // filter handle pollution.
+  const exclusions = opts?.simple
+    ? ""
+    : "-collection:(audio_poetry OR oldtimeradio OR librivoxaudio OR audio_booksother OR audio_news OR audio_tech) -subject:(spokenword) ";
   const q = encodeURIComponent(
-    `AND mediatype:(audio) AND format:(MP3) ${params}`,
+    `AND mediatype:(audio) AND format:(MP3) ${exclusions}${params}`,
   );
   const url =
     `https://archive.org/advancedsearch.php?q=${q}` +
-    `&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year` +
+    `&fl%5B%5D=identifier&fl%5B%5D=title&fl%5B%5D=creator&fl%5B%5D=year&fl%5B%5D=downloads` +
     `&rows=20&output=json&sort%5B%5D=downloads+desc`;
+
   const res = await fetch(url);
+  if (!res.ok && !opts?.simple) {
+    // one retry without negations before giving up
+    await new Promise((r) => setTimeout(r, 400));
+    return query(params, { simple: true });
+  }
   if (!res.ok) throw new Error(`archive ${res.status}`);
   const j = (await res.json()) as {
     response?: { docs?: IaDoc[] };
   };
-  const docs = j.response?.docs ?? [];
+  const docs = (j.response?.docs ?? []).filter(isMusic);
   // Probe CORS for at most a few items to keep discovery snappy.
   const withCors = await Promise.all(
     docs.slice(0, 12).map(async (d) => ({

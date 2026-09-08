@@ -13,6 +13,11 @@ import { fmaProvider } from "./fma";
 
 export * from "./types";
 
+/**
+ * Order matters: results are interleaved fairly per provider, so the first
+ * entry gets the top slots. Audius first — the largest, best-quality open
+ * catalog; the others follow.
+ */
 export const PROVIDERS: MusicProvider[] = [
   audiusProvider,
   jamendoProvider,

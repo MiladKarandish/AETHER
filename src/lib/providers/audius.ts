@@ -27,6 +27,9 @@ interface AudiusTrack {
   is_streamable?: boolean;
   /** present on gated tracks — these cannot be streamed freely */
   stream_conditions?: unknown;
+  /** engagement signals used to filter out low-quality bedroom uploads */
+  play_count?: number;
+  favorite_count?: number;
   artwork?: Record<string, string>;
   user?: { name?: string; handle?: string };
 }
@@ -45,6 +48,17 @@ function getHost(): Promise<string> {
 
 const playable = (t: AudiusTrack) =>
   t.is_streamable !== false && !t.stream_conditions && (t.duration ?? 0) > 0;
+
+/**
+ * Audius is fully open — anyone can upload. Without a quality gate, search
+ * drowns in unheard bedroom recordings. Tracks need real engagement
+ * (plays or favorites) to surface.
+ */
+const hasEngagement = (t: AudiusTrack) =>
+  (t.play_count ?? 0) >= 150 || (t.favorite_count ?? 0) >= 10;
+
+const byPlays = (a: AudiusTrack, b: AudiusTrack) =>
+  (b.play_count ?? 0) - (a.play_count ?? 0);
 
 function mapTrack(t: AudiusTrack, host: string): StreamTrack {
   return {
@@ -77,13 +91,17 @@ export const audiusProvider: MusicProvider = {
   available: true,
   search: async (q) => {
     const host = await getHost();
-    const tracks = await query(`/v1/tracks/search?query=${encodeURIComponent(q)}`);
-    return tracks.filter(playable).map((t) => mapTrack(t, host));
+    const tracks = await query(`/v1/tracks/search?query=${encodeURIComponent(q)}&limit=40`);
+    return tracks
+      .filter((t) => playable(t) && hasEngagement(t))
+      .sort(byPlays)
+      .map((t) => mapTrack(t, host));
   },
   trending: async (opts) => {
     const host = await getHost();
     const g = opts?.genre ? `&genre=${encodeURIComponent(opts.genre)}` : "";
+    // trending is already engagement-ranked upstream — just drop the dregs
     const tracks = await query(`/v1/tracks/trending?limit=24${g}`);
-    return tracks.filter(playable).map((t) => mapTrack(t, host));
+    return tracks.filter((t) => playable(t) && (t.play_count ?? 0) >= 50).map((t) => mapTrack(t, host));
   },
 };
