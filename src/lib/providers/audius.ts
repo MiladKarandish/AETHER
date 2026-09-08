@@ -80,9 +80,10 @@ export const audiusProvider: MusicProvider = {
     const tracks = await query(`/v1/tracks/search?query=${encodeURIComponent(q)}`);
     return tracks.filter(playable).map((t) => mapTrack(t, host));
   },
-  trending: async () => {
+  trending: async (opts) => {
     const host = await getHost();
-    const tracks = await query("/v1/tracks/trending?limit=24");
+    const g = opts?.genre ? `&genre=${encodeURIComponent(opts.genre)}` : "";
+    const tracks = await query(`/v1/tracks/trending?limit=24${g}`);
     return tracks.filter(playable).map((t) => mapTrack(t, host));
   },
 };

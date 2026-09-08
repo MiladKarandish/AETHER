@@ -5,6 +5,7 @@ import {
   PROVIDER_LABEL,
   PROVIDER_FILTERS,
   filterByProvider,
+  isRemixTitle,
   searchAll,
   trendingAll,
   type ProviderId,
@@ -22,40 +23,40 @@ interface Props {
 
 type Filter = ProviderId | "all";
 
+/** Genres offered for idle browsing (Audius trending supports these). */
+const GENRES = ["Electronic", "Ambient", "House", "Techno", "Lo-Fi", "Downtempo", "Chillout"];
+
 export default function Discover({ onClose, onPlay, onAdd, queuedIds }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<StreamTrack[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [genre, setGenre] = useState("");
+  const [originalsOnly, setOriginalsOnly] = useState(true);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const browsing = query.trim().length < 2;
 
-  // initial load: trending / curated picks
+  // trending when idle, debounced search once the user types
   useEffect(() => {
     let alive = true;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data load for the modal
-    setLoading(true);
-    trendingAll()
-      .then((t) => {
-        if (!alive) return;
-        setResults(t);
-        setError(t.length === 0 ? "No providers reachable right now." : null);
-      })
-      .catch(() => alive && setError("Could not reach any provider."))
-      .finally(() => alive && setLoading(false));
-    inputRef.current?.focus();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // debounced search as the user types
-  useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) return;
-    let alive = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data load for the modal
+    setLoading(true);
+    if (q.length < 2) {
+      trendingAll({ genre: genre || undefined })
+        .then((t) => {
+          if (!alive) return;
+          setResults(t);
+          setError(t.length === 0 ? "No providers reachable right now." : null);
+        })
+        .catch(() => alive && setError("Could not reach any provider."))
+        .finally(() => alive && setLoading(false));
+      return () => {
+        alive = false;
+      };
+    }
     const timer = setTimeout(() => {
-      setLoading(true);
       searchAll(q)
         .then((t) => {
           if (!alive) return;
@@ -69,12 +70,19 @@ export default function Discover({ onClose, onPlay, onAdd, queuedIds }: Props) {
       alive = false;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, genre]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   const availableFilters = PROVIDER_FILTERS.filter(
     (f) => f === "all" || results.some((t) => t.provider === f),
   );
-  const shown = filterByProvider(results, filter);
+  const remixed = results.filter((t) => isRemixTitle(t.title)).length;
+  const shown = filterByProvider(results, filter).filter(
+    (t) => !originalsOnly || !isRemixTitle(t.title),
+  );
 
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true">
@@ -104,6 +112,26 @@ export default function Discover({ onClose, onPlay, onAdd, queuedIds }: Props) {
           />
         </div>
 
+        {!browsing ? null : (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-[10px] tracking-[0.2em] text-zinc-600 uppercase">Browse</span>
+            {["", ...GENRES].map((g) => (
+              <button
+                key={g || "all"}
+                type="button"
+                onClick={() => setGenre(g)}
+                className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                  genre === g
+                    ? "border-white/30 bg-white/10 text-white"
+                    : "border-white/10 text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {g === "" ? "All" : g}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="mb-3 flex flex-wrap gap-1.5">
           {availableFilters.map((f) => (
             <button
@@ -119,10 +147,40 @@ export default function Discover({ onClose, onPlay, onAdd, queuedIds }: Props) {
               {f === "all" ? "All" : PROVIDER_LABEL[f]}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setOriginalsOnly((v) => !v)}
+            title="Hide remixes, covers, bootlegs and edits"
+            className={`ml-auto rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+              originalsOnly
+                ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                : "border-white/10 text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            ✦ Originals only{remixed > 0 ? ` · ${remixed} hidden` : ""}
+          </button>
         </div>
 
+        {!loading && (
+          <p className="mt-2 mb-1 px-1 text-[10px] text-zinc-600">
+            {browsing ? (genre ? `${genre} · trending` : "Trending across open catalogs") : "Search results"}
+            {" · "}
+            {shown.length} track{shown.length === 1 ? "" : "s"}
+            {" · originals first"}
+          </p>
+        )}
+
         <ul className="-mr-1 min-h-[120px] flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1">
-          {loading && <li className="px-1 py-6 text-center text-sm text-zinc-600">Searching…</li>}
+          {loading &&
+            [0, 1, 2, 3, 4, 5].map((i) => (
+              <li key={i} className="flex items-center gap-3 px-2 py-2">
+                <span className="h-10 w-10 shrink-0 animate-pulse rounded-lg bg-white/5" />
+                <span className="min-w-0 flex-1 space-y-1.5">
+                  <span className="block h-3 w-3/5 animate-pulse rounded bg-white/5" />
+                  <span className="block h-2.5 w-2/5 animate-pulse rounded bg-white/5" />
+                </span>
+              </li>
+            ))}
           {!loading && error && <li className="px-1 py-6 text-center text-sm text-zinc-600">{error}</li>}
           {!loading &&
             shown.map((t) => (
@@ -149,7 +207,14 @@ export default function Discover({ onClose, onPlay, onAdd, queuedIds }: Props) {
                     )}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-zinc-200">{t.title}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-sm text-zinc-200">{t.title}</span>
+                      {isRemixTitle(t.title) && (
+                        <span className="shrink-0 rounded border border-fuchsia-400/30 bg-fuchsia-400/10 px-1 py-px text-[9px] font-medium tracking-wide text-fuchsia-300 uppercase">
+                          Remix
+                        </span>
+                      )}
+                    </span>
                     <span className="block truncate text-xs text-zinc-600">
                       {t.artist} · {PROVIDER_LABEL[t.provider]}
                       {t.duration > 0 ? ` · ${formatTime(t.duration)}` : ""}

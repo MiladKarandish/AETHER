@@ -35,7 +35,7 @@ export interface MusicProvider {
   /** false → provider is skipped (e.g. Jamendo without a client id) */
   available: boolean;
   search(query: string): Promise<StreamTrack[]>;
-  trending?(): Promise<StreamTrack[]>;
+  trending?(opts?: TrendingOpts): Promise<StreamTrack[]>;
 }
 
 /** Deterministically pick a palette variant so tracks don't all look the same. */
@@ -46,4 +46,24 @@ export function pickPalette(
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return palettes[h % palettes.length];
+}
+
+const REMIX_TITLE_RE =
+  /\b(remix(es|ed)?|bootleg|reworks?|remakes?|flips?|mash ?ups?|vips?|covers?|edit|slowed|sped ?up|nightcore)\b/i;
+
+/**
+ * Heuristic: does the title suggest a remix/cover/bootleg rather than the
+ * artist's original work? Titles marked "original mix/version" are the
+ * artist's own release, so they count as originals.
+ */
+export function isRemixTitle(title: string): boolean {
+  const t = title.toLowerCase();
+  if (/\boriginal\b/.test(t)) return false;
+  return REMIX_TITLE_RE.test(t);
+}
+
+/** Options accepted by a provider's trending endpoint. */
+export interface TrendingOpts {
+  /** e.g. "Electronic", "Ambient" — providers may ignore unsupported genres */
+  genre?: string;
 }

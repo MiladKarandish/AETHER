@@ -1,4 +1,11 @@
-import type { MusicProvider, PlayerTrack, ProviderId, StreamTrack } from "./types";
+import type {
+  MusicProvider,
+  PlayerTrack,
+  ProviderId,
+  StreamTrack,
+  TrendingOpts,
+} from "./types";
+import { isRemixTitle } from "./types";
 import { audiusProvider } from "./audius";
 import { jamendoProvider } from "./jamendo";
 import { archiveProvider } from "./archive";
@@ -43,6 +50,7 @@ export interface SearchResult {
 /**
  * Search every available provider in parallel (cached per query). Failures
  * degrade silently — a dead provider just contributes no results.
+ * Originals are ranked ahead of remixes/covers/edits.
  */
 export async function searchAll(query: string): Promise<StreamTrack[]> {
   const key = `q:${query.toLowerCase().trim()}`;
@@ -58,25 +66,37 @@ export async function searchAll(query: string): Promise<StreamTrack[]> {
   );
   if (mine !== seq) return []; // superseded by a newer query
   const merged = dedupe(results.flat());
-  cache.set(key, merged);
-  return merged;
+  const ranked = rankOriginalsFirst(merged);
+  cache.set(key, ranked);
+  return ranked;
 }
 
 /** Trending / curated picks from every provider that supports it. */
-export async function trendingAll(): Promise<StreamTrack[]> {
-  const key = "trending";
+export async function trendingAll(opts?: TrendingOpts): Promise<StreamTrack[]> {
+  const genre = opts?.genre ?? "";
+  const key = `trending:${genre}`;
   const hit = cache.get(key);
   if (hit) return hit;
 
   const mine = ++seq;
   const active = PROVIDERS.filter((p) => p.available && p.trending);
   const results = await Promise.all(
-    active.map((p) => p.trending!().catch(() => [] as StreamTrack[])),
+    active.map((p) =>
+      p.trending!({ genre: genre || undefined }).catch(() => [] as StreamTrack[]),
+    ),
   );
   if (mine !== seq) return [];
   const merged = dedupe(results.flat());
-  cache.set(key, merged);
-  return merged;
+  const ranked = rankOriginalsFirst(merged);
+  cache.set(key, ranked);
+  return ranked;
+}
+
+/** Stable-sort originals ahead of remixes/covers/edits. */
+export function rankOriginalsFirst(tracks: StreamTrack[]): StreamTrack[] {
+  return [...tracks].sort(
+    (a, b) => Number(isRemixTitle(a.title)) - Number(isRemixTitle(b.title)),
+  );
 }
 
 /** Interleave providers so each gets fair representation at the top. */
