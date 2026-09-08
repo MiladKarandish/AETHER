@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import type { Track } from "@/lib/tracks";
+import type { PlayerTrack } from "@/lib/providers/types";
 import { formatTime } from "./queue-list";
 import {
   HeartIcon,
@@ -19,7 +19,7 @@ import {
 export type RepeatMode = "off" | "all" | "one";
 
 interface Props {
-  track: Track;
+  track: PlayerTrack;
   playing: boolean;
   position: number;
   liked: boolean;

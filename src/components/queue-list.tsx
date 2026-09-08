@@ -1,10 +1,12 @@
 "use client";
 
-import type { Track } from "@/lib/tracks";
+import type { PlayerTrack } from "@/lib/providers/types";
+import { PROVIDER_LABEL } from "@/lib/providers";
+import { isStream } from "@/lib/providers/types";
 import { HeartIcon } from "./icons";
 
 interface Props {
-  tracks: Track[];
+  tracks: PlayerTrack[];
   currentId: string;
   playing: boolean;
   liked: ReadonlySet<string>;
@@ -71,8 +73,15 @@ export default function QueueList({ tracks, currentId, playing, liked, onSelect,
                   >
                     {track.title}
                   </span>
-                  <span className="block truncate text-xs text-zinc-600">{track.album}</span>
+                  <span className="block truncate text-xs text-zinc-600">
+                    {isStream(track) ? `${track.artist} · ${track.album}` : track.album}
+                  </span>
                 </span>
+                {isStream(track) && (
+                  <span className="hidden shrink-0 rounded-full border border-white/10 px-1.5 py-0.5 text-[9px] tracking-wider text-zinc-500 uppercase sm:inline">
+                    {PROVIDER_LABEL[track.provider]}
+                  </span>
+                )}
                 <span className="text-xs tabular-nums text-zinc-600">{formatTime(track.duration)}</span>
                 <button
                   type="button"
