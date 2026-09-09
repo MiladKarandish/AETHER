@@ -11,7 +11,8 @@ import {
   type ProviderId,
   type StreamTrack,
 } from "@/lib/providers";
-import { CloseIcon, PlayIcon, PlusIcon, SearchIcon } from "./icons";
+import { CloseIcon, DownloadIcon, CheckIcon, PlayIcon, PlusIcon, SearchIcon } from "./icons";
+import { saveToLibrary } from "@/lib/library";
 import { formatTime } from "./queue-list";
 
 interface Props {
@@ -19,14 +20,74 @@ interface Props {
   onPlay: (t: StreamTrack) => void;
   onAdd: (t: StreamTrack) => void;
   queuedIds: ReadonlySet<string>;
+  savedIds: ReadonlySet<string>;
 }
 
 type Filter = ProviderId | "all";
 
+/** Same-origin download path — reuses the stream proxy (redirects followed). */
+const downloadUrl = (t: StreamTrack) => `/api/stream?url=${encodeURIComponent(t.streamUrl)}`;
+
+function DownloadButton({ track, saved }: { track: StreamTrack; saved: boolean }) {
+  const [state, setState] = useState<"idle" | "saving" | "done" | "error">(saved ? "done" : "idle");
+  const [pct, setPct] = useState(0);
+
+  const save = async () => {
+    setState("saving");
+    setPct(0);
+    try {
+      await saveToLibrary(
+        track.id,
+        {
+          title: track.title,
+          artist: track.artist,
+          artwork: track.artwork,
+          license: track.license,
+          pageUrl: track.pageUrl,
+          palette: track.palette,
+        },
+        downloadUrl(track),
+        (p) => setPct(p.total > 0 ? Math.round((p.received / p.total) * 100) : 0),
+      );
+      setState("done");
+    } catch {
+      setState("error");
+    }
+  };
+
+  if (state === "done") {
+    return (
+      <span aria-label="Saved to library" className="rounded-lg p-1.5 text-emerald-400/80">
+        <CheckIcon width={16} height={16} />
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      aria-label={`Save ${track.title} to library`}
+      onClick={save}
+      disabled={state === "saving"}
+      className={`relative rounded-lg p-1.5 transition-colors disabled:opacity-60 ${
+        state === "error" ? "text-red-400" : "text-zinc-500 hover:text-emerald-300"
+      }`}
+      title={state === "error" ? "Download failed — try again" : "Save to library"}
+    >
+      {state === "saving" && (
+        <span
+          className="absolute inset-x-1.5 bottom-1 h-0.5 rounded bg-emerald-400/70 transition-all"
+          style={{ width: `calc(${Math.max(pct, 8)}% - 6px)` }}
+        />
+      )}
+      <DownloadIcon width={16} height={16} />
+    </button>
+  );
+}
+
 /** Genres offered for idle browsing (Audius trending supports these). */
 const GENRES = ["Electronic", "Ambient", "House", "Techno", "Lo-Fi", "Downtempo", "Chillout"];
 
-export default function Discover({ onClose, onPlay, onAdd, queuedIds }: Props) {
+export default function Discover({ onClose, onPlay, onAdd, queuedIds, savedIds }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<StreamTrack[]>([]);
   const [loading, setLoading] = useState(true);
@@ -220,6 +281,7 @@ export default function Discover({ onClose, onPlay, onAdd, queuedIds }: Props) {
                       {t.duration > 0 ? ` · ${formatTime(t.duration)}` : ""}
                     </span>
                   </span>
+                  {t.downloadable && <DownloadButton track={t} saved={savedIds.has(t.id)} />}
                   <button
                     type="button"
                     aria-label={`Queue ${t.title}`}

@@ -122,11 +122,14 @@ export class AudioEngine {
     this.finished = false;
     this.pauseStreamEls();
     const el = this.getEl(t.corsSafe);
+    // blob: URLs (offline library) are already same-origin — play directly;
     // proxied → same-origin → no CORS constraints, analyser works;
     // direct → only as fallback (no analyser, but plays anything)
-    el.src = t.corsSafe
-      ? `/api/stream?url=${encodeURIComponent(t.streamUrl)}`
-      : t.streamUrl;
+    el.src = t.streamUrl.startsWith("blob:")
+      ? t.streamUrl
+      : t.corsSafe
+        ? `/api/stream?url=${encodeURIComponent(t.streamUrl)}`
+        : t.streamUrl;
     el.load();
     if (t.corsSafe) {
       this.ensureCtx();

@@ -30,6 +30,7 @@ export const PROVIDER_LABEL: Record<ProviderId, string> = {
   jamendo: "Jamendo",
   archive: "Archive",
   fma: "FMA",
+  library: "Library",
 };
 
 /** Generative tracks always come first in Discover. */

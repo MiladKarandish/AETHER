@@ -137,3 +137,34 @@ export const ExternalLinkIcon = (p: P) => (
     <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
   </svg>
 );
+
+export const DownloadIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M12 3v12" />
+    <path d="m7 10 5 5 5-5" />
+    <path d="M4 19h16" />
+  </svg>
+);
+
+export const TrashIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M4 7h16" />
+    <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+    <path d="M6 7v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7" />
+    <path d="M10 11v6M14 11v6" />
+  </svg>
+);
+
+export const LibraryIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M6 4v16" />
+    <path d="M10 4v16" />
+    <path d="m14 5 4.5 15" />
+  </svg>
+);
+
+export const CheckIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="m4 12.5 5 5L20 6.5" />
+  </svg>
+);

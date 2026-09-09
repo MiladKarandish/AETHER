@@ -9,11 +9,13 @@ import {
   type StreamTrack,
 } from "@/lib/providers";
 import { isStream } from "@/lib/providers/types";
+import { listLibrary, removeFromLibrary, type LibraryTrack } from "@/lib/library";
 import Visualizer from "./visualizer";
 import QueueList from "./queue-list";
 import Transport, { type RepeatMode } from "./transport";
 import Discover from "./discover";
-import { CloseIcon, KeyboardIcon, SearchIcon, WaveIcon } from "./icons";
+import LibraryPanel from "./library-panel";
+import { CloseIcon, KeyboardIcon, LibraryIcon, SearchIcon, WaveIcon } from "./icons";
 
 const SHORTCUTS: [string, string][] = [
   ["Space", "Play / pause"],
@@ -45,6 +47,8 @@ export default function MusicPlayer() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [savedIds, setSavedIds] = useState<ReadonlySet<string>>(new Set());
   const [queue, setQueue] = useState<PlayerTrack[]>(TRACKS);
   /** real duration reported by a stream once metadata loads */
   const [liveDuration, setLiveDuration] = useState<{ id: string; d: number } | null>(null);
@@ -67,6 +71,19 @@ export default function MusicPlayer() {
   useEffect(() => {
     queueRef.current = queue;
   }, [queue]);
+
+  // load the offline library into the tail of the queue on mount
+  useEffect(() => {
+    let alive = true;
+    listLibrary().then((lib) => {
+      if (!alive || lib.length === 0) return;
+      setSavedIds(new Set(lib.map((t) => t.id.slice("library:".length))));
+      setQueue((q) => [...q, ...lib.filter((l) => !q.some((x) => x.id === l.id))]);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // restore persisted settings
   useEffect(() => {
@@ -281,6 +298,38 @@ export default function MusicPlayer() {
     setQueue((q) => (q.some((x) => x.id === t.id) ? q : [...q, t]));
   }, []);
 
+  // library panel: play (and dismiss the panel) / remove a saved track
+  const playNow = useCallback(
+    (t: StreamTrack) => {
+      playStreamNow(t);
+      setLibraryOpen(false);
+    },
+    [playStreamNow],
+  );
+
+  const removeLibraryTrack = useCallback(
+    (libId: string) => {
+      const q = queueRef.current;
+      const i = q.findIndex((x) => x.id === libId);
+      if (i < 0) return;
+      const cur = stateRef.current.index;
+      if (i === cur) {
+        engine.pause();
+        setPlaying(false);
+        setIndex(0);
+      } else if (i < cur) {
+        setIndex(cur - 1);
+      }
+      setQueue(q.filter((x) => x.id !== libId));
+      setSavedIds((s) => {
+        const n = new Set(s);
+        n.delete(libId.slice("library:".length));
+        return n;
+      });
+    },
+    [engine],
+  );
+
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -427,6 +476,14 @@ export default function MusicPlayer() {
           >
             <SearchIcon width={13} height={13} />
             Discover
+          </button>
+          <button
+            type="button"
+            onClick={() => setLibraryOpen(true)}
+            className="flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
+          >
+            <LibraryIcon width={13} height={13} />
+            Library{savedIds.size > 0 ? ` · ${savedIds.size}` : ""}
           </button>
           <button
             type="button"
@@ -588,6 +645,17 @@ export default function MusicPlayer() {
           onPlay={playStreamNow}
           onAdd={addStreamToQueue}
           queuedIds={new Set(queue.map((t) => t.id))}
+          savedIds={savedIds}
+        />
+      )}
+
+      {/* offline library modal */}
+      {libraryOpen && (
+        <LibraryPanel
+          onClose={() => setLibraryOpen(false)}
+          onPlay={playNow}
+          onRemoved={removeLibraryTrack}
+          currentId={track.id}
         />
       )}
 

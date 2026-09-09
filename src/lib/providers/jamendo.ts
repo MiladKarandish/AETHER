@@ -42,6 +42,8 @@ function mapTrack(t: JamendoTrack): StreamTrack {
     license: "Creative Commons — free to stream with attribution",
     pageUrl: t.shorturl ?? t.license_ccurl ?? "https://www.jamendo.com",
     corsSafe: true,
+    // every Jamendo track ships a direct MP3 (audiodownload) — always savable
+    downloadable: true,
     palette: pickPalette(PALETTES, t.id),
   };
 }

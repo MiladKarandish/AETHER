@@ -1,6 +1,6 @@
 import type { Track } from "@/lib/tracks";
 
-export type ProviderId = "audius" | "jamendo" | "archive" | "fma";
+export type ProviderId = "audius" | "jamendo" | "archive" | "fma" | "library";
 
 /** A streamable track from an external free-music provider. */
 export interface StreamTrack {
@@ -21,6 +21,8 @@ export interface StreamTrack {
   pageUrl: string;
   /** true → can be routed through the Web Audio graph (visualizer works) */
   corsSafe: boolean;
+  /** true → the source offers a direct file download (save-to-library) */
+  downloadable?: boolean;
   palette: [string, string, string];
 }
 

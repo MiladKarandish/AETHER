@@ -30,6 +30,7 @@ interface AudiusTrack {
   /** engagement signals used to filter out low-quality bedroom uploads */
   play_count?: number;
   favorite_count?: number;
+  is_downloadable?: boolean;
   artwork?: Record<string, string>;
   user?: { name?: string; handle?: string };
 }
@@ -74,6 +75,7 @@ function mapTrack(t: AudiusTrack, host: string): StreamTrack {
     license: "Uploaded by the artist — see Audius",
     pageUrl: t.permalink?.startsWith("http") ? t.permalink : `https://audius.co${t.permalink ?? ""}`,
     corsSafe: true,
+    downloadable: t.is_downloadable === true,
     palette: pickPalette(PALETTES, t.id),
   };
 }
