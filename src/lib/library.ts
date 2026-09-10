@@ -1,8 +1,10 @@
 "use client";
 
+import type { LocalTrack } from "./local-track";
+
 /**
- * Offline library — downloaded tracks are stored as files in the browser's
- * OPFS (persistent, quota-backed) with an IndexedDB metadata index.
+ * Offline library — local audio files stored in the browser's OPFS
+ * (persistent, quota-backed) with an IndexedDB metadata index.
  * Playback goes through blob: URLs, which are same-origin → the analyser
  * (visualizer) works on library tracks unconditionally.
  */
@@ -11,9 +13,13 @@ const DB_NAME = "aether-library";
 const STORE = "tracks";
 const DB_VERSION = 1;
 
-/** Metadata row persisted in IndexedDB (file bytes live in OPFS). */
+/**
+ * Metadata row persisted in IndexedDB (file bytes live in OPFS).
+ * `license` / `pageUrl` are legacy fields from saved online tracks —
+ * kept so existing rows stay readable.
+ */
 export interface LibraryRecord {
-  /** `${sourceProvider}:${nativeId}` of the track it was downloaded from */
+  /** `${originProvider}:${nativeId}` of the track it was saved from */
   sourceId: string;
   title: string;
   artist: string;
@@ -25,28 +31,8 @@ export interface LibraryRecord {
   bytes: number;
 }
 
-/** Library track shaped for the player queue (StreamTrack-compatible). */
-export interface LibraryTrack {
-  id: string;
-  kind: "stream";
-  provider: "library";
-  title: string;
-  artist: string;
-  album: string;
-  duration: number;
-  artwork: string;
-  streamUrl: string;
-  license: string;
-  pageUrl: string;
-  corsSafe: true;
-  palette: [string, string, string];
-}
-
-export interface DownloadProgress {
-  received: number;
-  /** 0 = unknown size */
-  total: number;
-}
+/** Library track shaped for the player queue (LocalTrack-compatible). */
+export type LibraryTrack = LocalTrack;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -95,17 +81,13 @@ export async function listLibrary(): Promise<LibraryTrack[]> {
       // blob URLs die on reload — mint fresh ones per session
       out.push({
         id: `library:${r.sourceId}`,
-        kind: "stream",
-        provider: "library",
+        kind: "local",
         title: r.title,
         artist: r.artist,
         album: "AETHER Library",
         duration: 0,
         artwork: r.artwork,
-        streamUrl: URL.createObjectURL(file),
-        license: r.license,
-        pageUrl: r.pageUrl,
-        corsSafe: true,
+        url: URL.createObjectURL(file),
         palette: r.palette,
       });
     } catch {
@@ -115,54 +97,9 @@ export async function listLibrary(): Promise<LibraryTrack[]> {
   return out;
 }
 
-export function isSaved(sourceId: string): Promise<boolean> {
-  return withStore<IDBValidKey | undefined>("readonly", (s) =>
-    s.getKey(sourceId),
-  ).then((k) => k !== undefined);
-}
-
 /**
- * Download a track's audio into the OPFS library. `onProgress` reports
- * received/total bytes (total 0 when the server sends no length).
+ * Remove a track (file + metadata).
  */
-export async function saveToLibrary(
-  sourceId: string,
-  meta: Omit<LibraryRecord, "sourceId" | "savedAt" | "bytes">,
-  audioUrl: string,
-  onProgress?: (p: DownloadProgress) => void,
-): Promise<void> {
-  const res = await fetch(audioUrl);
-  if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
-  const total = Number(res.headers.get("content-length") ?? 0);
-
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    received += value.byteLength;
-    onProgress?.({ received, total });
-  }
-
-  const blob = new Blob(chunks as BlobPart[], { type: "audio/mpeg" });
-  const dir = await getDir();
-  const fh = await dir.getFileHandle(idToFile(sourceId), { create: true });
-  const writable = await fh.createWritable();
-  await writable.write(blob);
-  await writable.close();
-
-  const record: LibraryRecord = {
-    ...meta,
-    sourceId,
-    savedAt: Date.now(),
-    bytes: blob.size,
-  };
-  await withStore("readwrite", (s) => s.put(record));
-}
-
-/** Remove a track (file + metadata). */
 export async function removeFromLibrary(sourceId: string): Promise<void> {
   try {
     const dir = await getDir();

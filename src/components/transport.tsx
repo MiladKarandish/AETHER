@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import type { PlayerTrack } from "@/lib/providers/types";
+import type { PlayerTrack } from "@/lib/local-track";
 import { formatTime } from "./queue-list";
 import {
   HeartIcon,

@@ -1,0 +1,9 @@
+audius
+apikey: 804f12615f7dbabb4a5051bdd823df77e2bf4f52
+api secret: 597c3c5506a222f5bab1d486abacf5566020a6b10532ccfedfb74731bf91913c
+bearer token: qMZZ4xeaUa5VDT5WiYNlmdFuYj-fltAMRKkZYxlw5LY=
+
+jamendo
+clinet id: cb3d2a50
+client secret: 127e5db2d25bf4e7c4a6d6a2d329f673
+  

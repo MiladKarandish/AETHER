@@ -1,5 +1,5 @@
 import { compose, type ScoreEvent, type Track } from "./tracks";
-import type { StreamTrack } from "./providers/types";
+import type { LocalTrack } from "./local-track";
 
 const LOOKAHEAD = 0.35;
 const TICK_MS = 60;
@@ -35,19 +35,18 @@ export class AudioEngine {
   private _muted = false;
   private finished = false;
 
-  // ——— streaming (external providers) ———
-  private mode: "synth" | "stream" = "synth";
-  private streamTrack: StreamTrack | null = null;
-  private elCORS: HTMLAudioElement | null = null;
-  private elPlain: HTMLAudioElement | null = null;
-  private srcCORS: MediaElementAudioSourceNode | null = null;
+  // ——— local file playback (offline library) ———
+  private mode: "synth" | "local" = "synth";
+  private localTrack: LocalTrack | null = null;
+  private el: HTMLAudioElement | null = null;
+  private srcEl: MediaElementAudioSourceNode | null = null;
 
   /** Fired when playback reaches the end of the track. */
   onEnded: (() => void) | null = null;
-  /** Fired when the real duration becomes known after loading a stream. */
+  /** Fired when the real duration becomes known after loading a local file. */
   onDurationChanged: ((trackId: string, duration: number) => void) | null = null;
-  /** Fired when a stream fails to load/play (used for fallback + skip). */
-  onStreamError: ((error: unknown) => void) | null = null;
+  /** Fired when a local file fails to load/play (used to skip). */
+  onAudioError: ((error: unknown) => void) | null = null;
 
   setOnEnded(fn: (() => void) | null) {
     this.onEnded = fn;
@@ -57,8 +56,8 @@ export class AudioEngine {
     this.onDurationChanged = fn;
   }
 
-  setOnStreamError(fn: ((error: unknown) => void) | null) {
-    this.onStreamError = fn;
+  setOnAudioError(fn: ((error: unknown) => void) | null) {
+    this.onAudioError = fn;
   }
 
   get playing() {
@@ -74,9 +73,8 @@ export class AudioEngine {
   }
 
   get position() {
-    if (this.mode === "stream") {
-      const el = this.activeEl();
-      if (el) return clamp(el.currentTime, 0, this.duration || el.duration || 0);
+    if (this.mode === "local") {
+      if (this.el) return clamp(this.el.currentTime, 0, this.duration || this.el.duration || 0);
       return 0;
     }
     if (!this.ctx) return this.offset;
@@ -92,9 +90,9 @@ export class AudioEngine {
   load(track: Track) {
     this.stopAllVoices(0.05);
     this.stopTimer();
-    this.pauseStreamEls();
+    this.pauseLocalEl();
     this.mode = "synth";
-    this.streamTrack = null;
+    this.localTrack = null;
     this.events = compose(track);
     this.duration = track.duration;
     this.offset = 0;
@@ -104,65 +102,45 @@ export class AudioEngine {
   }
 
   /**
-   * Load an external stream. The primary path is the same-origin proxy
-   * (`/api/stream`), which sidesteps upstream CORS entirely and keeps the
-   * analyser (visualizer) alive for every provider. The direct, plain
-   * element is only used as a fallback when the proxy itself fails.
+   * Load a local audio file (offline library). The blob: URL is same-origin,
+   * so the element is routed through master gain + analyser — the visualizer
+   * works for local tracks unconditionally.
    */
-  loadStream(t: StreamTrack) {
+  loadLocal(t: LocalTrack) {
     this.stopAllVoices(0.05);
     this.stopTimer();
-    this.mode = "stream";
-    this.streamTrack = t;
+    this.pauseLocalEl();
+    this.mode = "local";
+    this.localTrack = t;
     this.events = [];
     this.duration = t.duration || 0;
     this.offset = 0;
     this.idx = 0;
     this._playing = false;
     this.finished = false;
-    this.pauseStreamEls();
-    const el = this.getEl(t.corsSafe);
-    // blob: URLs (offline library) are already same-origin — play directly;
-    // proxied → same-origin → no CORS constraints, analyser works;
-    // direct → only as fallback (no analyser, but plays anything)
-    el.src = t.streamUrl.startsWith("blob:")
-      ? t.streamUrl
-      : t.corsSafe
-        ? `/api/stream?url=${encodeURIComponent(t.streamUrl)}`
-        : t.streamUrl;
+    const el = this.getEl();
+    el.src = t.url;
     el.load();
-    if (t.corsSafe) {
-      this.ensureCtx();
-      this.connectCORS();
-    }
+    this.ensureCtx();
+    this.connectLocal();
     this.applyGain();
   }
 
-  /** Route the CORS-safe media element through master gain + analyser. */
-  private connectCORS() {
-    if (!this.elCORS || !this.ctx || this.srcCORS || !this.master) return;
-    this.srcCORS = this.ctx.createMediaElementSource(this.elCORS);
-    this.srcCORS.connect(this.master);
+  /** Route the local media element through master gain + analyser. */
+  private connectLocal() {
+    if (!this.el || !this.ctx || this.srcEl || !this.master) return;
+    this.srcEl = this.ctx.createMediaElementSource(this.el);
+    this.srcEl.connect(this.master);
   }
 
-  private activeEl(): HTMLAudioElement | null {
-    if (!this.streamTrack) return null;
-    return this.streamTrack.corsSafe ? this.elCORS : this.elPlain;
-  }
-
-  private getEl(cors: boolean): HTMLAudioElement {
-    const existing = cors ? this.elCORS : this.elPlain;
-    if (existing) return existing;
+  private getEl(): HTMLAudioElement {
+    if (this.el) return this.el;
     const el = new Audio();
     el.preload = "auto";
-    if (cors) {
-      // must be set BEFORE src for the analyser path to work
-      el.crossOrigin = "anonymous";
-    }
     el.addEventListener("loadedmetadata", () => {
       if (Number.isFinite(el.duration) && el.duration > 0) {
         this.duration = el.duration;
-        this.onDurationChanged?.(this.streamTrack?.id ?? "", el.duration);
+        this.onDurationChanged?.(this.localTrack?.id ?? "", el.duration);
       }
     });
     el.addEventListener("ended", () => {
@@ -170,24 +148,19 @@ export class AudioEngine {
       this.onEnded?.();
     });
     el.addEventListener("error", () => {
-      if (el.src) this.onStreamError?.(new Error(`stream error: ${el.src}`));
+      if (el.src) this.onAudioError?.(new Error(`audio error: ${el.src}`));
     });
-    if (cors) this.elCORS = el;
-    else this.elPlain = el;
+    this.el = el;
     return el;
   }
 
-  private pauseStreamEls() {
-    for (const el of [this.elCORS, this.elPlain]) {
-      if (el) {
-        el.pause();
-      }
-    }
+  private pauseLocalEl() {
+    this.el?.pause();
   }
 
   async play() {
-    if (this.mode === "stream") {
-      const el = this.activeEl();
+    if (this.mode === "local") {
+      const el = this.el;
       if (!el || !el.src) return;
       this.ensureCtx();
       if (this.ctx!.state === "suspended") {
@@ -202,7 +175,7 @@ export class AudioEngine {
         await el.play();
       } catch (err) {
         this._playing = false;
-        this.onStreamError?.(err);
+        this.onAudioError?.(err);
       }
       return;
     }
@@ -230,8 +203,8 @@ export class AudioEngine {
 
   pause() {
     if (!this._playing) return;
-    if (this.mode === "stream") {
-      this.activeEl()?.pause();
+    if (this.mode === "local") {
+      this.el?.pause();
       this._playing = false;
       return;
     }
@@ -242,8 +215,8 @@ export class AudioEngine {
   }
 
   seek(t: number) {
-    if (this.mode === "stream") {
-      const el = this.activeEl();
+    if (this.mode === "local") {
+      const el = this.el;
       const max = this.duration || el?.duration || 0;
       if (el) el.currentTime = clamp(t, 0, max);
       this.duration = max;
@@ -275,16 +248,13 @@ export class AudioEngine {
   destroy() {
     this.stopTimer();
     this.stopAllVoices(0.03);
-    this.pauseStreamEls();
-    for (const el of [this.elCORS, this.elPlain]) {
-      if (el) {
-        el.removeAttribute("src");
-        el.load();
-      }
+    this.pauseLocalEl();
+    if (this.el) {
+      this.el.removeAttribute("src");
+      this.el.load();
     }
-    this.elCORS = null;
-    this.elPlain = null;
-    this.srcCORS = null;
+    this.el = null;
+    this.srcEl = null;
     void this.ctx?.close().catch(() => undefined);
     this.ctx = null;
   }
@@ -343,8 +313,6 @@ export class AudioEngine {
     if (this.master && this.ctx) {
       this.master.gain.setTargetAtTime(target, this.ctx.currentTime, 0.03);
     }
-    // plain (non-CORS) streams bypass the Web Audio graph — set volume directly
-    if (this.elPlain) this.elPlain.volume = clamp(target, 0, 1);
   }
 
   private lowerBound(t: number) {

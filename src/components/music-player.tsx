@@ -3,19 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TRACKS } from "@/lib/tracks";
 import { AudioEngine } from "@/lib/engine";
-import {
-  PROVIDER_LABEL,
-  type PlayerTrack,
-  type StreamTrack,
-} from "@/lib/providers";
-import { isStream } from "@/lib/providers/types";
-import { listLibrary, removeFromLibrary, type LibraryTrack } from "@/lib/library";
+import { isLocal, type PlayerTrack } from "@/lib/local-track";
+import { listLibrary } from "@/lib/library";
 import Visualizer from "./visualizer";
 import QueueList from "./queue-list";
 import Transport, { type RepeatMode } from "./transport";
-import Discover from "./discover";
 import LibraryPanel from "./library-panel";
-import { CloseIcon, KeyboardIcon, LibraryIcon, SearchIcon, WaveIcon } from "./icons";
+import { CloseIcon, KeyboardIcon, LibraryIcon, WaveIcon } from "./icons";
 
 const SHORTCUTS: [string, string][] = [
   ["Space", "Play / pause"],
@@ -27,7 +21,6 @@ const SHORTCUTS: [string, string][] = [
   ["R", "Repeat mode"],
   ["L", "Like current track"],
   ["I", "Immersive mode"],
-  ["D", "Discover online music"],
   ["Esc", "Exit immersive / close panels"],
   ["?", "Toggle this panel"],
 ];
@@ -46,11 +39,9 @@ export default function MusicPlayer() {
   const [immersive, setImmersive] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
-  const [discoverOpen, setDiscoverOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [savedIds, setSavedIds] = useState<ReadonlySet<string>>(new Set());
   const [queue, setQueue] = useState<PlayerTrack[]>(TRACKS);
-  /** real duration reported by a stream once metadata loads */
+  /** real duration reported by a local file once metadata loads */
   const [liveDuration, setLiveDuration] = useState<{ id: string; d: number } | null>(null);
 
   const track = queue[index] ?? TRACKS[0];
@@ -59,10 +50,10 @@ export default function MusicPlayer() {
       ? { ...track, duration: liveDuration.d }
       : track;
   const palette = track.palette;
+  const localCount = queue.filter(isLocal).length;
   const stateRef = useRef({ shuffle, repeat, index, queueLen: queue.length });
   const queueRef = useRef(queue);
   const pendingPlay = useRef(false);
-  const retryId = useRef<string | null>(null);
 
   // keep an imperative snapshot for callbacks that must not re-bind
   useEffect(() => {
@@ -77,7 +68,6 @@ export default function MusicPlayer() {
     let alive = true;
     listLibrary().then((lib) => {
       if (!alive || lib.length === 0) return;
-      setSavedIds(new Set(lib.map((t) => t.id.slice("library:".length))));
       setQueue((q) => [...q, ...lib.filter((l) => !q.some((x) => x.id === l.id))]);
     });
     return () => {
@@ -120,7 +110,7 @@ export default function MusicPlayer() {
   // load track whenever selection changes
   useEffect(() => {
     const t = queue[index] ?? TRACKS[0];
-    if (isStream(t)) engine.loadStream(t);
+    if (isLocal(t)) engine.loadLocal(t);
     else engine.load(t);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset transport state for the new track
     setPosition(0);
@@ -196,28 +186,17 @@ export default function MusicPlayer() {
     };
   }, [engine, pickNextIndex]);
 
-  // stream lifecycle: real duration + failure fallback (CORS retry → skip)
+  // local track lifecycle: real duration + skip on failure
   useEffect(() => {
     engine.setOnDurationChanged((id, d) => setLiveDuration({ id, d }));
-    engine.setOnStreamError(() => {
-      const cur = stateRef.current.index;
-      const t = queueRef.current[cur];
-      if (!t) return;
-      if (isStream(t) && t.corsSafe && retryId.current !== t.id) {
-        // first failure: retry the same track without the analyser path
-        retryId.current = t.id;
-        engine.loadStream({ ...t, corsSafe: false });
-        void engine.play().catch(() => undefined);
-      } else {
-        // give up on this track and move on
-        retryId.current = null;
-        setPlaying(false);
-        setIndex(pickNextIndex(1));
-      }
+    engine.setOnAudioError(() => {
+      // a local file failed to load or play — give up on it and move on
+      setPlaying(false);
+      setIndex(pickNextIndex(1));
     });
     return () => {
       engine.setOnDurationChanged(null);
-      engine.setOnStreamError(null);
+      engine.setOnAudioError(null);
     };
   }, [engine, pickNextIndex]);
 
@@ -279,33 +258,18 @@ export default function MusicPlayer() {
 
   const toggleImmersive = useCallback(() => setImmersive((v) => !v), []);
 
-  // discover: play a stream now (append to queue if needed) or just queue it
-  const playStreamNow = useCallback((t: StreamTrack) => {
+  // library panel: play a local track (append to the queue if needed)
+  const playNow = useCallback((t: PlayerTrack) => {
     const q = queueRef.current;
     const i = q.findIndex((x) => x.id === t.id);
     pendingPlay.current = true;
-    retryId.current = null;
     if (i >= 0) {
       setIndex(i);
     } else {
       setQueue([...q, t]);
       setIndex(q.length);
     }
-    setDiscoverOpen(false);
   }, []);
-
-  const addStreamToQueue = useCallback((t: StreamTrack) => {
-    setQueue((q) => (q.some((x) => x.id === t.id) ? q : [...q, t]));
-  }, []);
-
-  // library panel: play (and dismiss the panel) / remove a saved track
-  const playNow = useCallback(
-    (t: StreamTrack) => {
-      playStreamNow(t);
-      setLibraryOpen(false);
-    },
-    [playStreamNow],
-  );
 
   const removeLibraryTrack = useCallback(
     (libId: string) => {
@@ -321,11 +285,6 @@ export default function MusicPlayer() {
         setIndex(cur - 1);
       }
       setQueue(q.filter((x) => x.id !== libId));
-      setSavedIds((s) => {
-        const n = new Set(s);
-        n.delete(libId.slice("library:".length));
-        return n;
-      });
     },
     [engine],
   );
@@ -384,17 +343,12 @@ export default function MusicPlayer() {
         case "I":
           toggleImmersive();
           break;
-        case "d":
-        case "D":
-          setDiscoverOpen((s) => !s);
-          break;
         case "?":
           setShowShortcuts((s) => !s);
           break;
         case "Escape":
           setShowShortcuts(false);
           setQueueOpen(false);
-          setDiscoverOpen(false);
           setImmersive(false);
           break;
       }
@@ -408,7 +362,7 @@ export default function MusicPlayer() {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
       title: track.title,
-      artist: isStream(track) ? track.artist : "AETHER Engine",
+      artist: isLocal(track) ? track.artist : "AETHER Engine",
       album: track.album,
     });
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
@@ -471,19 +425,11 @@ export default function MusicPlayer() {
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => setDiscoverOpen(true)}
-            className="flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
-          >
-            <SearchIcon width={13} height={13} />
-            Discover
-          </button>
-          <button
-            type="button"
             onClick={() => setLibraryOpen(true)}
             className="flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
           >
             <LibraryIcon width={13} height={13} />
-            Library{savedIds.size > 0 ? ` · ${savedIds.size}` : ""}
+            Library{localCount > 0 ? ` · ${localCount}` : ""}
           </button>
           <button
             type="button"
@@ -528,35 +474,22 @@ export default function MusicPlayer() {
             key={`info-${track.id}`}
             className={`track-enter mt-6 transition-all duration-500 ${immersive ? "pointer-events-none opacity-0" : ""}`}
           >
-            {isStream(track) ? (
+            {isLocal(track) ? (
               <>
                 <p className="mb-2 text-[11px] tracking-[0.3em] text-zinc-500 uppercase">
                   {track.artist} · {track.album}
                 </p>
                 <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">{track.title}</h2>
-                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[11px] text-zinc-500">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span
-                        className={`absolute inline-flex h-full w-full rounded-full ${playing ? "animate-ping" : ""}`}
-                        style={{ backgroundColor: palette[1] }}
-                      />
-                      <span
-                        className="relative inline-flex h-1.5 w-1.5 rounded-full"
-                        style={{ backgroundColor: palette[1] }}
-                      />
-                    </span>
-                    streaming from {PROVIDER_LABEL[track.provider]}
+                <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[11px] text-zinc-500">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span
+                      className={`absolute inline-flex h-full w-full rounded-full ${playing ? "animate-ping" : ""}`}
+                      style={{ backgroundColor: palette[1] }}
+                    />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ backgroundColor: palette[1] }} />
                   </span>
-                  <a
-                    href={track.pageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1 text-[11px] text-zinc-500 transition-colors hover:border-white/25 hover:text-zinc-300"
-                  >
-                    {track.license}
-                  </a>
-                </div>
+                  playing from your local library
+                </p>
               </>
             ) : (
               <>
@@ -637,17 +570,6 @@ export default function MusicPlayer() {
           onMute={toggleMute}
         />
       </div>
-
-      {/* discover modal */}
-      {discoverOpen && (
-        <Discover
-          onClose={() => setDiscoverOpen(false)}
-          onPlay={playStreamNow}
-          onAdd={addStreamToQueue}
-          queuedIds={new Set(queue.map((t) => t.id))}
-          savedIds={savedIds}
-        />
-      )}
 
       {/* offline library modal */}
       {libraryOpen && (

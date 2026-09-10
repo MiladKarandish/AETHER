@@ -7,8 +7,6 @@ import {
   type LibraryTrack,
 } from "@/lib/library";
 import { CloseIcon, PlayIcon, TrashIcon } from "./icons";
-import { formatTime } from "./queue-list";
-
 interface Props {
   onClose: () => void;
   onPlay: (t: LibraryTrack) => void;
@@ -33,7 +31,6 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
     onRemoved(t.id);
   };
 
-  const totalBytes = (tracks ?? []).length;
 
   return (
     <div className="fixed inset-0 z-40 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true">
@@ -66,9 +63,8 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
           <div className="px-2 py-10 text-center">
             <p className="text-sm text-zinc-400">Your library is empty.</p>
             <p className="mx-auto mt-2 max-w-sm text-xs leading-relaxed text-zinc-600">
-              Open <span className="text-zinc-400">Discover</span> and hit the ⤓ button on any
-              downloadable track — Jamendo tracks can all be saved, plus artist-enabled downloads
-              on Audius. Saved tracks live in this browser and play offline.
+              Tracks saved here live in this browser and play offline, right
+              alongside the generative engine.
             </p>
           </div>
         ) : (
@@ -87,7 +83,7 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
                       }}
                     >
                       {t.artwork && (
-                        // eslint-disable-next-line @next/next/no-img-element -- remote provider artwork, unoptimized
+                        // eslint-disable-next-line @next/next/no-img-element -- stored artwork, unoptimized
                         <img src={t.artwork} alt="" width={40} height={40} loading="lazy" className="h-full w-full object-cover" />
                       )}
                     </span>
@@ -121,7 +117,7 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
         )}
 
         <p className="mt-3 text-center text-[10px] text-zinc-700">
-          Saved via each provider&apos;s official, licensed download API — attribution preserved.
+          Stored offline in this browser — plays without a network connection.
         </p>
       </div>
     </div>

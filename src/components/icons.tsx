@@ -116,36 +116,6 @@ export const KeyboardIcon = (p: P) => (
   </svg>
 );
 
-export const SearchIcon = (p: P) => (
-  <svg {...base(p)}>
-    <circle cx="11" cy="11" r="7" />
-    <path d="m21 21-4.3-4.3" />
-  </svg>
-);
-
-export const PlusIcon = (p: P) => (
-  <svg {...base(p)}>
-    <path d="M12 5v14" />
-    <path d="M5 12h14" />
-  </svg>
-);
-
-export const ExternalLinkIcon = (p: P) => (
-  <svg {...base(p)}>
-    <path d="M15 3h6v6" />
-    <path d="M10 14 21 3" />
-    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-  </svg>
-);
-
-export const DownloadIcon = (p: P) => (
-  <svg {...base(p)}>
-    <path d="M12 3v12" />
-    <path d="m7 10 5 5 5-5" />
-    <path d="M4 19h16" />
-  </svg>
-);
-
 export const TrashIcon = (p: P) => (
   <svg {...base(p)}>
     <path d="M4 7h16" />
@@ -163,8 +133,3 @@ export const LibraryIcon = (p: P) => (
   </svg>
 );
 
-export const CheckIcon = (p: P) => (
-  <svg {...base(p)}>
-    <path d="m4 12.5 5 5L20 6.5" />
-  </svg>
-);

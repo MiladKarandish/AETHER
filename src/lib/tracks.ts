@@ -13,6 +13,8 @@ export interface ScoreEvent {
 }
 
 export interface Track {
+  /** discriminator for the queue union */
+  kind: "synth";
   id: string;
   title: string;
   album: string;
@@ -41,6 +43,7 @@ export const SCALES = {
 
 export const TRACKS: Track[] = [
   {
+    kind: "synth",
     id: "solar-drift",
     title: "Solar Drift",
     album: "Heliographs",
@@ -54,6 +57,7 @@ export const TRACKS: Track[] = [
     blurb: "Slow golden currents of light, suspended somewhere above the sun.",
   },
   {
+    kind: "synth",
     id: "ultraviolet-rain",
     title: "Ultraviolet Rain",
     album: "Heliographs",
@@ -67,6 +71,7 @@ export const TRACKS: Track[] = [
     blurb: "A midnight storm heard through a prism — every drop a different violet.",
   },
   {
+    kind: "synth",
     id: "tidal-memory",
     title: "Tidal Memory",
     album: "Cartography",
@@ -80,6 +85,7 @@ export const TRACKS: Track[] = [
     blurb: "The ocean remembers everything it has ever carried.",
   },
   {
+    kind: "synth",
     id: "night-cartography",
     title: "Night Cartography",
     album: "Cartography",
@@ -93,6 +99,7 @@ export const TRACKS: Track[] = [
     blurb: "Mapping a city that only exists between 2 and 4 a.m.",
   },
   {
+    kind: "synth",
     id: "glass-meridian",
     title: "Glass Meridian",
     album: "Cartography",
@@ -106,6 +113,7 @@ export const TRACKS: Track[] = [
     blurb: "Lines of longitude drawn on frozen water.",
   },
   {
+    kind: "synth",
     id: "half-light-chorus",
     title: "Half-Light Chorus",
     album: "Signal Bloom",
@@ -119,6 +127,7 @@ export const TRACKS: Track[] = [
     blurb: "For the minutes when dusk and dawn are indistinguishable.",
   },
   {
+    kind: "synth",
     id: "analog-sunrise",
     title: "Analog Sunrise",
     album: "Signal Bloom",
@@ -132,6 +141,7 @@ export const TRACKS: Track[] = [
     blurb: "A sunrise rebuilt from oscillators and optimism.",
   },
   {
+    kind: "synth",
     id: "signal-bloom",
     title: "Signal Bloom",
     album: "Signal Bloom",
