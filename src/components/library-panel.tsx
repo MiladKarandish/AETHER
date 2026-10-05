@@ -11,7 +11,7 @@ import {
   type LibraryTrack,
 } from "@/lib/library";
 import { CloseIcon, PlayIcon, PlusIcon, TrashIcon } from "./icons";
-import { formatTime } from "./queue-list";
+import { formatBytes, formatDuration } from "@/lib/format";
 import { useSwipeToDismiss } from "@/hooks/use-keyboard-shortcuts";
 
 interface Props {
@@ -22,13 +22,6 @@ interface Props {
   /** Plays the closing animation before the parent unmounts us. */
   closing?: boolean;
 }
-
-const bytes = (n: number) => {
-  if (!Number.isFinite(n) || n <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
-  return `${(n / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-};
 
 export default function LibraryPanel({
   onClose,
@@ -293,7 +286,7 @@ export default function LibraryPanel({
                       <span className="block truncate text-xs text-zinc-600">{t.artist}</span>
                     </span>
                     <span className="text-xs tabular-nums text-zinc-700">
-                      {t.duration > 0 ? formatTime(t.duration) : "—"}
+                      {t.duration > 0 ? formatDuration(t.duration) : "—"}
                     </span>
                     <button
                       type="button"
@@ -320,7 +313,7 @@ export default function LibraryPanel({
         )}
 
         <p className="mt-3 text-center text-[10px] text-zinc-700">
-          {usage && usage.quota > 0 ? `${bytes(usage.used)} of ${bytes(usage.quota)} used · ` : null}
+          {usage && usage.quota > 0 ? `${formatBytes(usage.used)} of ${formatBytes(usage.quota)} used · ` : null}
           Stored offline in this browser — plays without a network connection.
         </p>
       </div>

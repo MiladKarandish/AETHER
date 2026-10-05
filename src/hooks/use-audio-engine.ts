@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioEngine, type Stem } from "@/lib/engine";
 import { isLocal, type PlayerTrack } from "@/lib/local-track";
 import { saveDuration } from "@/lib/library";
+import { fileIdOf } from "@/lib/drive";
+import { saveDuration as saveDriveDuration } from "@/lib/drive-client";
 
 /**
  * Wraps the AudioEngine lifecycle and exposes reactive transport state.
@@ -110,12 +112,18 @@ export function useAudioEngine(track: PlayerTrack | undefined) {
   }, [engine, playing]);
 
   // Learn the real duration of local files and persist it for next time.
+  // Drive needs this too: Drive stores no duration for an audio file, so the
+  // only way the queue stops showing 0:00 is to write back what the browser
+  // measured. Both writes are best-effort and never interrupt playback.
   useEffect(() => {
     engine.setOnDurationChanged((id, d) => {
       setLiveDuration({ id, d });
       if (id.startsWith("library:")) {
         void saveDuration(id.slice("library:".length), d);
+        return;
       }
+      const fileId = fileIdOf(id);
+      if (fileId) void saveDriveDuration(fileId, d);
     });
     return () => {
       engine.setOnDurationChanged(null);

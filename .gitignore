@@ -37,6 +37,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the documented template must be tracked, or nobody can discover the
+# Drive configuration. Everything else matching .env* stays ignored.
+!.env.example
 
 # vercel
 .vercel

@@ -181,3 +181,11 @@ export const ExpandIcon = (p: P) => (
     <path d="M20 15v5h-5" />
   </svg>
 );
+
+
+/** Google Drive — a simple cloud outline, consistent with the other glyphs. */
+export const CloudIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M6.5 18a4.5 4.5 0 0 1-.6-8.96 5.5 5.5 0 0 1 10.6-1.6A4 4 0 0 1 17.5 18Z" />
+  </svg>
+);

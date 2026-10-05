@@ -1,6 +1,7 @@
 "use client";
 
 import type { LocalTrack } from "./local-track";
+import { hashString, paletteFor } from "./palette";
 
 /**
  * Offline library — audio files stored in the browser's OPFS
@@ -134,26 +135,6 @@ export function isLibrarySupported(): boolean {
   return capability;
 }
 
-/** A deterministic palette so imported files look intentional in the queue. */
-const PALETTES: [string, string, string][] = [
-  ["#f59e0b", "#fbbf24", "#fef3c7"],
-  ["#8b5cf6", "#d946ef", "#f0abfc"],
-  ["#06b6d4", "#14b8a6", "#a5f3fc"],
-  ["#ef4444", "#f97316", "#fecaca"],
-  ["#10b981", "#84cc16", "#bbf7d0"],
-  ["#ec4899", "#fb7185", "#fbcfe8"],
-];
-
-/** Stable hash so re-importing the same file maps to the same palette. */
-function hashString(s: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
 const extOf = (name: string) => {
   const i = name.lastIndexOf(".");
   return i > 0 ? name.slice(i + 1).toLowerCase() : "";
@@ -189,7 +170,7 @@ const rowToTrack = (r: LibraryRecord, url: string): LibraryTrack => ({
   duration: r.duration ?? 0,
   artwork: r.artwork ?? "",
   url,
-  palette: r.palette ?? PALETTES[hashString(r.sourceId) % PALETTES.length],
+  palette: r.palette ?? paletteFor(r.sourceId),
 });
 
 /** Mint (or reuse) a blob: URL for a stored file. One URL per file per session. */
@@ -226,7 +207,9 @@ export async function importFile(
   }
   const ext = extOf(file.name) || "mp3";
   // name+size+mtime makes re-importing the same file idempotent
-  const sourceId = `local:${hashString(`${file.name}:${file.size}:${file.lastModified}`).toString(36)}`;
+  const sourceId = `local:${hashString(
+    `${file.name}:${file.size}:${file.lastModified}`,
+  ).toString(36)}`;
 
   const dir = await getDir();
   const fh = await dir.getFileHandle(idToFile(sourceId, ext), { create: true });
@@ -238,7 +221,7 @@ export async function importFile(
   }
   extBySourceId.set(sourceId, ext);
 
-  const palette = PALETTES[hashString(sourceId) % PALETTES.length];
+  const palette = paletteFor(sourceId);
   const record: LibraryRecord = {
     sourceId,
     title: meta.title?.trim() || file.name.replace(/\.[^.]+$/, "") || "Untitled",

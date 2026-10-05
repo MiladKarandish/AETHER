@@ -23,6 +23,11 @@
  * requests, so they never reach this fetch handler. Playback of local tracks runs off
  * blob: URLs, which we also never intercept (see the scheme check below).
  *
+ * Note on Google Drive: isPublicAsset() below excludes /api/, so Drive audio streamed
+ * through /api/drive/audio/<id> is never cached here. That matters twice over -- it is
+ * private per user, and a cached copy would keep playing after someone disconnects.
+ * Range requests skip the handler entirely, which is what seeking relies on.
+ *
  * BUMP CACHE_VERSION on every deploy that changes the shell. `activate` drops every
  * generation older than the previous one.
  */

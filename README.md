@@ -2,10 +2,14 @@
 
 **A generative music engine that lives in a web page.**
 
-There are no audio files in this repository. Every track is composed note by note and
-synthesized live in the browser with the Web Audio API — oscillators, noise buffers, a
-convolution reverb, and a seeded pseudo-random number generator. No streaming service, no
-`<audio src>` pointing at a file on disk, just mathematics.
+There are no audio files in this repository. The nine built-in tracks are composed note by
+note and synthesized live in the browser with the Web Audio API — oscillators, noise
+buffers, a convolution reverb, and a seeded pseudo-random number generator. No streaming
+service, no `<audio src>` pointing at a file on disk, just mathematics.
+
+You can also bring your own music. It is kept offline in the browser's storage by default,
+or optionally saved in a Google Drive folder in your own account — see
+[Google Drive](#google-drive). Neither is required to play the generative catalogue.
 
 Nine tracks ship with the engine, each defined by nothing more than a title, a tempo, a
 root note, a mode, and an integer seed.
@@ -26,6 +30,11 @@ the browser requires a user gesture before it will let an `AudioContext` produce
 | `npm run build` | Production build (`next build`) |
 | `npm run start` | Serve the production build (`next start`) |
 | `npm run lint` | ESLint via `eslint-config-next` |
+| `npm run verify` | Typecheck + lint + tests, the same gate CI runs |
+
+Optionally, to save your own music in Google Drive, copy `.env.example` to `.env.local`
+and fill in the OAuth values — see [Google Drive](#google-drive). The app works fully
+without them.
 
 ## How it works
 
@@ -160,6 +169,116 @@ The library depends on two storage APIs that don't have identical support matric
 The generative engine itself has no such dependency. `AudioContext` is broadly supported
 (the engine falls back to `webkitAudioContext` for older Safari) and, since the seed is the
 only input, playback is identical on every machine that can run the Web Audio API.
+
+## Google Drive
+
+The OPFS library above lives in one browser on one machine. Drive is the second option:
+your music sits in an `AETHER Music` folder in your own Google account, so it follows you
+between devices and survives clearing site data.
+
+It is **entirely optional**. With no Drive configuration the app behaves exactly as before —
+the generative engine, the local library, and the PWA are untouched.
+
+### Setup
+
+Copy `.env.example` to `.env.local` and fill in four values:
+
+```bash
+cp .env.example .env.local
+```
+
+| Variable | Purpose |
+| --- | --- |
+| `GOOGLE_CLIENT_ID` | OAuth client id from the Google Cloud console |
+| `GOOGLE_CLIENT_SECRET` | Its client secret |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:3000/api/drive/callback` locally; the https equivalent once deployed |
+| `AETHER_SESSION_SECRET` | 32+ random characters, encrypts the session cookie (`openssl rand -base64 32`) |
+| `GOOGLE_DRIVE_FOLDER` | Optional; renames the folder inside Drive |
+
+In the Google Cloud console: enable the **Google Drive API**, create an **OAuth client ID**
+of type *Web application*, and register the redirect URI exactly as written above (the
+path and port must match `GOOGLE_REDIRECT_URI`, or Google rejects the handshake).
+
+### Design
+
+```
+browser ──▶ /api/drive/* ──▶ Google Drive API
+   │            │
+   │            └── OAuth 2.0 auth-code flow; refresh token sealed into an
+   │                AES-256-GCM encrypted, httpOnly cookie
+   │
+   ├── upload: browser PUTs the bytes ──────────────────────▶ resumable session on Google
+   └── playback: <audio src="/api/drive/audio/<id>"> ──▶ same-origin, Range-aware proxy
+```
+
+Four decisions shape the whole feature:
+
+**Tokens never reach the browser.** The OAuth dance, the refresh token, and every Drive API
+call happen server-side. The browser only ever calls same-origin routes that authenticate
+with the encrypted cookie. `src/lib/server/*` is marked `server-only`, so importing it from
+a component is a *build* error rather than a silent credential leak.
+
+**The scope is the narrowest one that works.** `drive.file` grants access only to files this
+app creates. AETHER can never read the rest of your Drive — not by accident, not if the
+deploy is compromised. The broader `drive` scope would hand over every document you own.
+
+**Uploads bypass this server.** `POST /api/drive/tracks` mints a Google *resumable* session
+and returns its URL; the browser then PUTs the bytes straight to Google. A large album never
+enters this process's memory, no request body limit applies, and a dropped connection
+retries without re-sending everything.
+
+**Playback is proxied, and that proxy is the point.** `/api/drive/audio/[fileId]` forwards
+the client's `Range` header to Drive and passes the `206`/`Content-Range` straight through.
+That is what makes seeking work, and staying same-origin is what keeps the analyser fed —
+the same two properties `blob:` URLs give the OPFS library. For the same reason a Drive
+track is just a `LocalTrack` with id `drive:<fileId>`: the engine, queue, mixer gating, and
+error recovery need no changes at all.
+
+### Where the metadata lives
+
+Drive has no title/artist/duration fields for arbitrary files, so AETHER writes them to the
+file's **description**:
+
+```
+Roygbiv — Boards of Canada (143s)
+```
+
+This keeps the library self-describing: a file dragged into any other Drive client still
+shows its name and artist, and a rename in Drive can't desync a metadata index. Duration is
+the exception — Drive has no such concept at all, so it's absent until the browser plays the
+file once and writes back what it measured.
+
+### Routes
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/drive/status` | Is Drive configured? Is this browser connected? Never throws |
+| `GET /api/drive/auth` | Mints a CSRF `state` nonce, returns Google's consent URL |
+| `GET /api/drive/callback` | Exchanges the code, seals the session, redirects back |
+| `POST /api/drive/disconnect` | Revokes the grant at Google and clears the cookie |
+| `GET /api/drive/tracks` | The library listing, paginated |
+| `POST /api/drive/tracks` | Begins a resumable upload, returns the session URL |
+| `PATCH /api/drive/tracks/[id]` | Edit title/artist, or persist a learned duration |
+| `DELETE /api/drive/tracks/[id]` | Delete the file from Drive |
+| `GET /api/drive/audio/[id]` | Range-aware media stream — this is what plays |
+| `HEAD /api/drive/audio/[id]` | Metadata probe; fetches size without the body |
+
+### Failure behaviour
+
+Every route funnels errors through one helper, so the panel sees a consistent
+`{ error, code }` and never has to parse Google's error body. Codes are carried explicitly
+rather than inferred from the HTTP status, because unrelated failures share statuses —
+a `403` is a blocked cross-site request, not an expired grant, and reporting it as
+"unauthorized" would send the user to reconnect for no reason.
+
+Mutating routes additionally reject cross-site requests by comparing `Origin` to `Host`
+(`SameSite=Lax` alone doesn't cover them), and the OAuth handshake uses a 256-bit `state`
+nonce verified on the way back.
+
+A revoked or unreadable session is cleared automatically, so the panel offers **Reconnect**
+instead of retrying forever. Deleting from the queue never deletes from Drive — only the
+panel's explicit, two-step delete does.
+
 
 ## Keyboard shortcuts
 
@@ -306,12 +425,14 @@ src/
   app/
     layout.tsx            metadata, Geist fonts
     page.tsx              renders <MusicPlayer />
+    api/drive/            OAuth, listing, upload, and media-stream routes
   components/
     music-player.tsx      player shell: composes the hooks and renders the layout
     transport.tsx         seek bar + playback controls
     queue-list.tsx        the queue
     visualizer.tsx        canvas radial spectrum
     library-panel.tsx     offline library browser (import, search, repair)
+    drive-panel.tsx       Google Drive library (connect, upload, browse, delete)
     mixer-panel.tsx      per-instrument stem mixer
     score-view.tsx       canvas timeline of the generated score
     pwa-register.tsx     production-only service worker registration
@@ -322,11 +443,20 @@ src/
     use-persistent-state.ts  localStorage-backed state with validation
     use-keyboard-shortcuts.ts  key bindings, dialog dismissal, swipe, scroll lock
     use-shareable-track.ts ?t= URL parsing and native sharing
+    use-drive-library.ts  Drive connection state, uploads, listing
   lib/
     tracks.ts             TRACKS, SCALES, mulberry32, compose(), composeCached()
     engine.ts             AudioEngine — scheduler, synth voices, stems, reverb, analyser
     library.ts            OPFS + IndexedDB offline library
     local-track.ts        LocalTrack / PlayerTrack union and the isLocal() guard
+    drive.ts              Drive types, metadata/filename parsing, query escaping
+    drive-client.ts       browser-side client for the /api/drive routes
+    format.ts             formatBytes / formatDuration / formatLength
+    palette.ts            the deterministic accent palettes
+    server/
+      drive.ts            OAuth + Drive REST client (server-only)
+      drive-session.ts    AES-256-GCM sealed session cookie (server-only)
+      drive-api.ts        shared route plumbing: authorize, error mapping
   __tests__/              vitest unit tests for the pure logic
 ```
 

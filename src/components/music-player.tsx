@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TRACKS, remixTrack, variationOf } from "@/lib/tracks";
 import { isLocal, type PlayerTrack } from "@/lib/local-track";
+import { fileIdOf } from "@/lib/drive";
 import { listLibrary, revokeLibraryUrls } from "@/lib/library";
 import { usePlayerQueue } from "@/hooks/use-player-queue";
 import { useAudioEngine, useStems, withLiveDuration } from "@/hooks/use-audio-engine";
@@ -23,10 +24,12 @@ import Visualizer from "./visualizer";
 import QueueList from "./queue-list";
 import Transport, { type RepeatMode } from "./transport";
 import LibraryPanel from "./library-panel";
+import DrivePanel from "./drive-panel";
 import MixerPanel from "./mixer-panel";
 import ScoreView from "./score-view";
 import {
   CloseIcon,
+  CloudIcon,
   DiceIcon,
   DownloadIcon,
   ExpandIcon,
@@ -58,6 +61,7 @@ export default function MusicPlayer() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [driveOpen, setDriveOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const {
@@ -302,6 +306,35 @@ export default function MusicPlayer() {
     [playNow, requestPlay, setPlaying],
   );
 
+  /**
+   * Play a Drive track.
+   *
+   * The panel hands over a ready-made queue entry, so this only has to make
+   * playback start rather than merely select the row.
+   */
+  const playDriveTrack = useCallback(
+    (t: PlayerTrack) => {
+      requestPlay();
+      setPlaying(false);
+      playNow(t);
+    },
+    [playNow, requestPlay, setPlaying],
+  );
+
+  /** A Drive track was deleted in the panel: drop it from the queue too. */
+  const removeDriveTrack = useCallback(
+    (fileId: string) => {
+      const result = removeAt(`drive:${fileId}`);
+      if (result === -2) {
+        // The playing track was deleted — stop and fall back to the first.
+        engine.pause();
+        setPlaying(false);
+        setIndex(0);
+      }
+    },
+    [engine, removeAt, setIndex, setPlaying],
+  );
+
   /** Library track removed: keep the index pointing at the same logical track. */
   const removeLibraryTrack = useCallback(
     (libId: string) => {
@@ -322,8 +355,10 @@ export default function MusicPlayer() {
       const t = queueRef.current[i];
       if (!t) return;
       if (isLocal(t)) {
-        // Removing a library track means removing it from the library too.
-        removeLibraryTrack(t.id);
+        // Drive tracks live in the user's Drive, so removing one from the queue
+        // must not delete the file. Only OPFS tracks are destroyed with the row.
+        if (fileIdOf(t.id) === null) removeLibraryTrack(t.id);
+        else removeAt(t.id);
         return;
       }
       const result = removeAt(t.id);
@@ -359,9 +394,10 @@ export default function MusicPlayer() {
   // Keep every overlay mounted through its exit animation.
   const queuePresence = usePresence(queueOpen);
   const libraryPresence = usePresence(libraryOpen);
+  const drivePresence = usePresence(driveOpen);
   const mixerPresence = usePresence(mixerOpen);
   const shortcutsPresence = usePresence(showShortcuts);
-  useScrollLock(queueOpen || libraryOpen || showShortcuts || mixerOpen);
+  useScrollLock(queueOpen || libraryOpen || driveOpen || showShortcuts || mixerOpen);
 
   // Reflect the playing track in the tab title so it stays visible when the
   // window is backgrounded or minimised. Generated tracks have no `artist`,
@@ -402,6 +438,7 @@ export default function MusicPlayer() {
         setShowShortcuts(false);
         setQueueOpen(false);
         setLibraryOpen(false);
+        setDriveOpen(false);
         setMixerOpen(false);
         setImmersive(false);
       },
@@ -516,6 +553,15 @@ export default function MusicPlayer() {
             <span className="hidden text-xs sm:inline">
               Library{localCount > 0 ? ` · ${localCount}` : ""}
             </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setDriveOpen(true)}
+            aria-label="Open Google Drive library"
+            className="press tap-target flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-white/10 text-zinc-400 transition-colors hover:border-white/25 hover:text-white sm:h-auto sm:w-auto sm:rounded-full sm:px-3 sm:py-1.5"
+          >
+            <CloudIcon width={16} height={16} />
+            <span className="hidden text-xs sm:inline">Drive</span>
           </button>
           <button
             type="button"
@@ -774,6 +820,17 @@ export default function MusicPlayer() {
           onRemoved={removeLibraryTrack}
           currentId={safeTrack.id}
           closing={libraryPresence.closing}
+        />
+      )}
+
+      {/* Google Drive library modal */}
+      {drivePresence.mounted && (
+        <DrivePanel
+          onClose={() => setDriveOpen(false)}
+          onPlay={playDriveTrack}
+          onRemoved={removeDriveTrack}
+          currentId={safeTrack.id}
+          closing={drivePresence.closing}
         />
       )}
 
