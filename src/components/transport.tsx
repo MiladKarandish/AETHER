@@ -129,7 +129,7 @@ export default function Transport(props: Props) {
             onClick={props.onLike}
             aria-label={props.liked ? "Unlike this track" : "Like this track"}
             aria-pressed={props.liked}
-            className={`tap-target shrink-0 rounded-md p-2 transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
+            className={`press tap-target shrink-0 rounded-md p-2 transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
               props.liked ? "text-rose-400" : "text-zinc-600"
             }`}
           >
@@ -170,7 +170,7 @@ export default function Transport(props: Props) {
               onClick={props.onShuffle}
               aria-label="Shuffle"
               aria-pressed={props.shuffle}
-              className={`tap-target rounded-full p-2.5 transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
+              className={`press tap-target rounded-full p-2.5 transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
                 props.shuffle ? "text-white" : "text-zinc-600 hover:text-zinc-300"
               }`}
             >
@@ -180,7 +180,7 @@ export default function Transport(props: Props) {
               type="button"
               onClick={props.onPrev}
               aria-label="Previous track"
-              className="tap-target rounded-full p-2.5 text-zinc-400 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+              className="press tap-target rounded-full p-2.5 text-zinc-400 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
             >
               <PrevIcon />
             </button>
@@ -200,7 +200,7 @@ export default function Transport(props: Props) {
               type="button"
               onClick={props.onNext}
               aria-label="Next track"
-              className="tap-target rounded-full p-2.5 text-zinc-400 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+              className="press tap-target rounded-full p-2.5 text-zinc-400 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
             >
               <NextIcon />
             </button>
@@ -208,7 +208,7 @@ export default function Transport(props: Props) {
               type="button"
               onClick={props.onRepeat}
               aria-label={`Repeat: ${props.repeat}`}
-              className={`tap-target rounded-full p-2.5 transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
+              className={`press tap-target rounded-full p-2.5 transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
                 props.repeat !== "off" ? "text-white" : "text-zinc-600 hover:text-zinc-300"
               }`}
             >
@@ -222,7 +222,7 @@ export default function Transport(props: Props) {
               type="button"
               onClick={props.onMute}
               aria-label={muted ? "Unmute" : "Mute"}
-              className="tap-target rounded-full p-2 text-zinc-500 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+              className="press tap-target rounded-full p-2 text-zinc-500 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
             >
               {muted || volume === 0 ? <MuteIcon width={17} height={17} /> : <VolumeIcon width={17} height={17} />}
             </button>

@@ -249,6 +249,56 @@ breakpoints. Phone-specific behaviour:
   scrollbar-width compensation so nothing shifts.
 - **Landscape** — short viewports get compact padding via a `max-height` media query.
 
+## Motion
+
+All transitions are defined in one place in `src/app/globals.css` so timing and
+easing stay consistent. Shared tokens: `--dur-fast` (120ms), `--dur-base` (200ms),
+`--dur-sheet` (260ms), plus `--ease-out` / `--ease-in-out`.
+
+- **Overlays animate both ways.** Every modal and bottom sheet fades and scales
+  or slides in *and out*. Conditional rendering unmounts instantly and can never
+  play an exit, so `usePresence` keeps the element mounted through the closing
+  animation. Sheets slide up from the bottom edge on mobile and scale in from
+  `sm` up, where they're centered rather than bottom-anchored.
+- **Swipe-to-dismiss composes with the CSS animation.** While a drag is in
+  flight the keyframe animation is suppressed so the drag offset is the only
+  thing driving `translateY`; on release the animation is restored and the closing
+  keyframe takes over. Dragging less than the threshold snaps back.
+- **Press feedback** — `.press` scales controls down slightly on `:active`, with a
+  stronger, faster response on coarse pointers where there is no hover state.
+- **Staggered lists** — `.anim-list` fades its children in sequence.
+- **Reduced motion** — every animation above is disabled under
+  `prefers-reduced-motion`, including the visualizer's canvas loop.
+
+### Performance
+
+Every animation is compositor-only (`opacity` / `transform`), so the browser runs
+them without layout or paint work per frame. This matters here because the page
+already runs two `requestAnimationFrame` canvas loops (the visualizer and the score
+view).
+
+Two things were deliberately removed rather than added:
+
+- The track-change animation used to animate `filter: blur()`, which re-rasterises
+  text every frame. It now uses only opacity and transform.
+- No `will-change` on the sheets. These animations are one-shot and browsers
+  already promote the element while the animation runs; leaving the hint on would
+  pin a GPU layer for the sheet's whole lifetime.
+
+`src/__tests__/motion.test.ts` enforces these invariants so they can't silently
+regress. It is mutation-checked: adding a paint-triggering property to any
+`@keyframes` block fails the suite.
+
+### Why no animation library
+
+The React Compiler is enabled (`reactCompiler: true`), and animation libraries are
+prone to conflicting with its rules. More importantly, a library would drive most
+transitions through `requestAnimationFrame` and inline style writes, which is
+strictly more main-thread work per frame than compositor-driven CSS — on a page
+already animating two canvases. Every animation needed here is opacity or
+transform, which CSS does better and for free. The one genuinely hard problem,
+exit animations, is handled by a 30-line `usePresence` hook.
+
 ## Project layout
 
 ```

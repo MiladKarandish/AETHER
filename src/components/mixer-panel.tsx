@@ -9,6 +9,8 @@ interface Props {
   onChange: (stem: Stem, value: number) => void;
   onClose: () => void;
   onReset: () => void;
+  /** Plays the closing animation before the parent unmounts us. */
+  closing?: boolean;
 }
 
 /** Display names and colours for the six synth voices. */
@@ -23,7 +25,7 @@ const LANES: { id: Stem; label: string; hint: string; color: string }[] = [
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-export default function MixerPanel({ gains, onChange, onClose, onReset }: Props) {
+export default function MixerPanel({ gains, onChange, onClose, onReset, closing }: Props) {
   // A voice is effectively muted at or below this level.
   const isMuted = (v: number) => v <= 0.001;
   const toggleMute = useCallback(
@@ -38,8 +40,13 @@ export default function MixerPanel({ gains, onChange, onClose, onReset }: Props)
       aria-modal="true"
       aria-label="Mixer"
     >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="safe-bottom safe-x relative flex max-h-[85dvh] w-full max-w-md flex-col rounded-t-2xl border border-white/10 bg-[#0b0b11] p-5 shadow-2xl sm:rounded-2xl">
+      <div
+        className={`anim-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm ${closing ? "closing" : ""}`}
+        onClick={onClose}
+      />
+      <div
+        className={`anim-sheet safe-bottom safe-x relative flex max-h-[85dvh] w-full max-w-md flex-col rounded-t-2xl border border-white/10 bg-[#0b0b11] p-5 shadow-2xl sm:rounded-2xl ${closing ? "closing" : ""}`}
+      >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="flex items-center gap-2 text-xs font-medium tracking-[0.25em] text-zinc-400 uppercase">
             <SlidersIcon width={14} height={14} />
@@ -57,14 +64,14 @@ export default function MixerPanel({ gains, onChange, onClose, onReset }: Props)
               type="button"
               onClick={onClose}
               aria-label="Close mixer"
-              className="tap-target rounded-md p-1 text-zinc-500 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+              className="press tap-target rounded-md p-1 text-zinc-500 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
             >
               <CloseIcon width={16} height={16} />
             </button>
           </div>
         </div>
 
-        <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
+        <ul className="anim-list min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
           {LANES.map((lane) => {
             const value = gains[lane.id];
             const muted = isMuted(value);
@@ -101,7 +108,7 @@ export default function MixerPanel({ gains, onChange, onClose, onReset }: Props)
                   onClick={() => toggleMute(lane.id)}
                   aria-label={muted ? `Unmute ${lane.label}` : `Mute ${lane.label}`}
                   aria-pressed={muted}
-                  className={`tap-target w-9 shrink-0 rounded-md px-1 py-1 text-[10px] tabular-nums transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
+                  className={`press tap-target w-9 shrink-0 rounded-md px-1 py-1 text-[10px] tabular-nums transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
                     muted
                       ? "bg-rose-500/20 text-rose-300"
                       : "text-zinc-500 hover:text-zinc-300"

@@ -1,6 +1,50 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+/**
+ * Keeps an element mounted through its exit animation.
+ *
+ * Conditional rendering (`{open && <Modal/>}`) unmounts immediately, so the
+ * component can never play a closing transition — the overlay just vanishes.
+ * This returns `mounted` to keep rendering plus a `closing` flag used to switch
+ * the animation class, and holds the mount until the animation ends (with a
+ * timeout fallback, because `animationend` never fires when animations are
+ * disabled or reduced).
+ */
+export function usePresence(
+  open: boolean,
+  durationMs = 220,
+): { mounted: boolean; closing: boolean } {
+  const [mounted, setMounted] = useState(open);
+  const [wasOpen, setWasOpen] = useState(open);
+
+  // Adjust state during render (React's documented "derive state from props"
+  // pattern) so mounting happens in the same commit as the open change, with no
+  // cascading render.
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setMounted(true);
+  }
+
+  // Still on screen but `open` went false -> we're playing the exit animation.
+  const closing = wasOpen === true && open === false && mounted;
+
+  useEffect(() => {
+    if (!closing) return;
+    // Respect prefers-reduced-motion: skip the wait, unmount at once.
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(
+      () => setMounted(false),
+      reduce ? 0 : durationMs,
+    );
+    return () => window.clearTimeout(timer);
+  }, [closing, durationMs]);
+
+  return { mounted, closing };
+}
 
 /**
  * Drag-to-dismiss for bottom sheets.
@@ -14,6 +58,9 @@ export function useSwipeToDismiss(onDismiss: () => void) {
   const startY = useRef<number | null>(null);
   const offset = useRef(0);
   const sheetRef = useRef<HTMLDivElement | null>(null);
+  // Set while a drag is in flight so the opening/closing CSS animation is
+  // suppressed and the drag transform is the only thing driving `translateY`.
+  const dragging = useRef(false);
 
   // Callbacks are returned individually (not as one object holding the ref) so
   // spreading them onto JSX doesn't trip the "no refs during render" rule.
@@ -24,35 +71,44 @@ export function useSwipeToDismiss(onDismiss: () => void) {
     if (target.closest("[data-no-swipe]")) return;
     startY.current = e.touches[0].clientY;
     offset.current = 0;
+    dragging.current = true;
   }, []);
 
   const onTouchMove = useCallback((e: React.TouchEvent) => {
     if (startY.current === null) return;
     const dy = e.touches[0].clientY - startY.current;
+    const sheet = sheetRef.current;
     // only drag downward — upward movement belongs to the list
     if (dy <= 0) {
       offset.current = 0;
+      if (sheet) sheet.style.transform = "";
       return;
     }
     offset.current = dy;
-    const sheet = sheetRef.current;
     if (sheet) {
+      // Suppress the entry animation while dragging, otherwise the keyframe's
+      // transform would override (and fight) the drag offset.
+      sheet.style.animation = "none";
       sheet.style.transform = `translateY(${dy}px)`;
-      sheet.style.transition = "none";
     }
   }, []);
 
   const end = useCallback(() => {
     const sheet = sheetRef.current;
     const dy = offset.current;
+    const wasDragging = dragging.current;
     startY.current = null;
     offset.current = 0;
+    dragging.current = false;
+
     if (sheet) {
-      sheet.style.transition = "transform 0.2s ease-out";
-      // Dismiss far enough down, or animate back into place.
-      sheet.style.transform = dy > 110 ? "translateY(100%)" : "translateY(0)";
+      // Restore the CSS animation so the closing keyframe can take over, then
+      // let React add the `closing` class. Clearing the inline transform is
+      // safe because the animation drives the position from here on.
+      sheet.style.animation = "";
+      sheet.style.transform = "";
     }
-    if (dy > 110) onDismiss();
+    if (wasDragging && dy > 110) onDismiss();
   }, [onDismiss]);
 
   return { sheetRef, onTouchStart, onTouchMove, onTouchEnd: end, onTouchCancel: end };

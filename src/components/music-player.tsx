@@ -12,7 +12,12 @@ import {
   reviveNumber,
   usePersistentState,
 } from "@/hooks/use-persistent-state";
-import { useKeyboardShortcuts, useScrollLock, useSwipeToDismiss } from "@/hooks/use-keyboard-shortcuts";
+import {
+  useKeyboardShortcuts,
+  usePresence,
+  useScrollLock,
+  useSwipeToDismiss,
+} from "@/hooks/use-keyboard-shortcuts";
 import { useShareableTrack } from "@/hooks/use-shareable-track";
 import Visualizer from "./visualizer";
 import QueueList from "./queue-list";
@@ -341,6 +346,11 @@ export default function MusicPlayer() {
   const closeQueue = useCallback(() => setQueueOpen(false), []);
   const { sheetRef: queueSheetRef, onTouchStart: qTouchStart, onTouchMove: qTouchMove, onTouchEnd: qTouchEnd, onTouchCancel: qTouchCancel } =
     useSwipeToDismiss(closeQueue);
+  // Keep every overlay mounted through its exit animation.
+  const queuePresence = usePresence(queueOpen);
+  const libraryPresence = usePresence(libraryOpen);
+  const mixerPresence = usePresence(mixerOpen);
+  const shortcutsPresence = usePresence(showShortcuts);
   useScrollLock(queueOpen || libraryOpen || showShortcuts || mixerOpen);
 
   // Reflect the playing track in the tab title so it stays visible when the
@@ -483,7 +493,7 @@ export default function MusicPlayer() {
           <button
             type="button"
             onClick={() => setLibraryOpen(true)}
-            className="tap-target flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
+            className="press tap-target flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
           >
             <LibraryIcon width={13} height={13} />
             <span className="hidden min-[380px]:inline">Library</span>
@@ -492,7 +502,7 @@ export default function MusicPlayer() {
           <button
             type="button"
             onClick={() => setQueueOpen(true)}
-            className="tap-target rounded-full px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:text-white lg:hidden"
+            className="press tap-target rounded-full px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:text-white lg:hidden"
           >
             Queue
           </button>
@@ -503,7 +513,7 @@ export default function MusicPlayer() {
               type="button"
               onClick={() => setMixerOpen(true)}
               aria-label="Open mixer"
-              className="tap-target rounded-full p-2 text-zinc-500 transition-colors hover:text-white"
+              className="press tap-target rounded-full p-2 text-zinc-500 transition-colors hover:text-white"
             >
               <SlidersIcon width={17} height={17} />
             </button>
@@ -514,7 +524,7 @@ export default function MusicPlayer() {
             type="button"
             onClick={() => setShowShortcuts(true)}
             aria-label="Keyboard shortcuts"
-            className="tap-target hidden rounded-full p-2 text-zinc-500 transition-colors hover:text-white sm:block"
+            className="press tap-target hidden rounded-full p-2 text-zinc-500 transition-colors hover:text-white sm:block"
           >
             <KeyboardIcon width={17} height={17} />
           </button>
@@ -523,7 +533,7 @@ export default function MusicPlayer() {
             onClick={toggleImmersive}
             aria-label="Toggle immersive mode"
             aria-pressed={immersive}
-            className="tap-target rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
+            className="press tap-target rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
           >
             Immersive
           </button>
@@ -591,7 +601,7 @@ export default function MusicPlayer() {
                     <button
                       type="button"
                       onClick={remixCurrent}
-                      className="tap-target inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-zinc-400 transition-colors hover:border-white/25 hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+                      className="press tap-target inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-zinc-400 transition-colors hover:border-white/25 hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
                     >
                       <DiceIcon width={13} height={13} />
                       Remix
@@ -599,7 +609,7 @@ export default function MusicPlayer() {
                     <button
                       type="button"
                       onClick={doShare}
-                      className="tap-target inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-zinc-400 transition-colors hover:border-white/25 hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+                      className="press tap-target inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-zinc-400 transition-colors hover:border-white/25 hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
                     >
                       <DownloadIcon width={13} height={13} />
                       Share
@@ -608,7 +618,7 @@ export default function MusicPlayer() {
                       type="button"
                       onClick={() => setScoreView((v) => !v)}
                       aria-pressed={scoreView}
-                      className={`tap-target rounded-full border px-3 py-1.5 text-[11px] transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
+                      className={`press tap-target rounded-full border px-3 py-1.5 text-[11px] transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
                         scoreView
                           ? "border-white/25 text-white"
                           : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-white"
@@ -647,12 +657,18 @@ export default function MusicPlayer() {
         </aside>
       </main>
 
-      {/* queue — mobile drawer */}
-      {queueOpen && (
-        <div className="fixed inset-0 z-30 lg:hidden" role="dialog" aria-modal="true" aria-label="Queue">
+      {/* queue — mobile drawer. Presence keeps it mounted through its exit
+          animation; `closing` swaps to the out-animation. */}
+      {queuePresence.mounted && (
+        <div
+          className="fixed inset-0 z-30 lg:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Queue"
+        >
           <div
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-            onClick={() => setQueueOpen(false)}
+            className={`anim-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm ${queuePresence.closing ? "closing" : ""}`}
+            onClick={closeQueue}
           />
           <div
             ref={queueSheetRef}
@@ -660,7 +676,7 @@ export default function MusicPlayer() {
             onTouchMove={qTouchMove}
             onTouchEnd={qTouchEnd}
             onTouchCancel={qTouchCancel}
-            className="absolute inset-x-0 bottom-0 flex max-h-[80dvh] flex-col rounded-t-2xl border-t border-white/10 bg-[#0a0a0f] p-4 safe-x safe-bottom"
+            className={`anim-sheet absolute inset-x-0 bottom-0 flex max-h-[80dvh] flex-col rounded-t-2xl border-t border-white/10 bg-[#0a0a0f] p-4 safe-x safe-bottom ${queuePresence.closing ? "closing" : ""}`}
           >
             {/* grab handle + explicit close: the backdrop alone is a poor
                 affordance on touch, and pb-8 ignored the home indicator. */}
@@ -670,7 +686,7 @@ export default function MusicPlayer() {
                 type="button"
                 onClick={() => setQueueOpen(false)}
                 aria-label="Close queue"
-                className="tap-target -mt-1 rounded-md p-1 text-zinc-500 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+                className="press tap-target -mt-1 rounded-md p-1 text-zinc-500 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
               >
                 <CloseIcon width={16} height={16} />
               </button>
@@ -685,7 +701,7 @@ export default function MusicPlayer() {
         <button
           type="button"
           onClick={toggleImmersive}
-          className="tap-target fixed top-5 right-5 z-30 rounded-full border border-white/10 bg-black/40 px-3.5 py-1.5 text-xs text-zinc-400 backdrop-blur-md transition-colors hover:border-white/25 hover:text-white"
+          className="press tap-target fixed top-5 right-5 z-30 rounded-full border border-white/10 bg-black/40 px-3.5 py-1.5 text-xs text-zinc-400 backdrop-blur-md transition-colors hover:border-white/25 hover:text-white"
         >
           Exit immersive
         </button>
@@ -730,30 +746,42 @@ export default function MusicPlayer() {
       </div>
 
       {/* offline library modal */}
-      {libraryOpen && (
+      {libraryPresence.mounted && (
         <LibraryPanel
           onClose={() => setLibraryOpen(false)}
           onPlay={playLibraryTrack}
           onRemoved={removeLibraryTrack}
           currentId={safeTrack.id}
+          closing={libraryPresence.closing}
         />
       )}
 
       {/* mixer */}
-      {mixerOpen && (
+      {mixerPresence.mounted && (
         <MixerPanel
           gains={stemGains}
           onChange={setStem}
           onReset={resetStems}
           onClose={() => setMixerOpen(false)}
+          closing={mixerPresence.closing}
         />
       )}
 
       {/* shortcuts modal */}
-      {showShortcuts && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowShortcuts(false)} />
-          <div className="relative w-full max-w-sm rounded-2xl border border-white/10 bg-[#0b0b11] p-6 shadow-2xl">
+      {shortcutsPresence.mounted && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Keyboard shortcuts"
+        >
+          <div
+            className={`anim-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm ${shortcutsPresence.closing ? "closing" : ""}`}
+            onClick={() => setShowShortcuts(false)}
+          />
+          <div
+            className={`anim-dialog relative w-full max-w-sm rounded-2xl border border-white/10 bg-[#0b0b11] p-6 shadow-2xl ${shortcutsPresence.closing ? "closing" : ""}`}
+          >
             <button
               type="button"
               onClick={() => setShowShortcuts(false)}
@@ -763,7 +791,7 @@ export default function MusicPlayer() {
               <CloseIcon width={16} height={16} />
             </button>
             <h3 className="mb-4 text-xs font-medium tracking-[0.25em] text-zinc-400 uppercase">Keyboard shortcuts</h3>
-            <ul className="space-y-2.5">
+            <ul className="anim-list space-y-2.5">
               {SHORTCUTS.map(([key, label]) => (
                 <li key={key} className="flex items-center justify-between text-sm">
                   <span className="text-zinc-500">{label}</span>

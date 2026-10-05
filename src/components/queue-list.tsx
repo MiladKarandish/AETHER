@@ -92,7 +92,7 @@ export default function QueueList({
       <ul
         ref={listRef}
         data-no-swipe
-        className="flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1 pb-4"
+        className="anim-list flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1 pb-4"
       >
         {tracks.map((track, i) => {
           const isCurrent = track.id === currentId;
@@ -128,7 +128,7 @@ export default function QueueList({
                     onPointerUp={onHandlePointerUp}
                     onPointerCancel={onHandlePointerUp}
                     onClick={(e) => e.stopPropagation()}
-                    className="tap-target -ml-1 shrink-0 cursor-grab touch-none rounded p-1 text-zinc-700 transition-colors hover:text-zinc-400 focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none active:cursor-grabbing sm:opacity-0 sm:group-hover:opacity-100"
+                    className="press tap-target -ml-1 shrink-0 cursor-grab touch-none rounded p-1 text-zinc-700 transition-colors hover:text-zinc-400 focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none active:cursor-grabbing sm:opacity-0 sm:group-hover:opacity-100"
                   >
                     <svg width="10" height="14" viewBox="0 0 10 14" aria-hidden="true" fill="currentColor">
                       <circle cx="2" cy="2" r="1.4" />
@@ -192,7 +192,7 @@ export default function QueueList({
                       e.stopPropagation();
                       onRemove(i);
                     }}
-                    className="tap-target rounded-md p-1 text-zinc-700 transition-colors hover:text-red-400 focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+                    className="press tap-target rounded-md p-1 text-zinc-700 transition-colors hover:text-red-400 focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
                   >
                     <CloseIcon width={13} height={13} />
                   </button>

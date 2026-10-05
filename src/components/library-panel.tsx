@@ -19,6 +19,8 @@ interface Props {
   onPlay: (t: LibraryTrack) => void;
   onRemoved: (sourceId: string) => void;
   currentId: string;
+  /** Plays the closing animation before the parent unmounts us. */
+  closing?: boolean;
 }
 
 const bytes = (n: number) => {
@@ -28,7 +30,13 @@ const bytes = (n: number) => {
   return `${(n / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 };
 
-export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: Props) {
+export default function LibraryPanel({
+  onClose,
+  onPlay,
+  onRemoved,
+  currentId,
+  closing,
+}: Props) {
   const { sheetRef, onTouchStart, onTouchMove, onTouchEnd, onTouchCancel } =
     useSwipeToDismiss(onClose);
   // Capability is a static, environment-level fact, so resolve it during the
@@ -131,14 +139,17 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
       aria-modal="true"
       aria-label="Your library"
     >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className={`anim-backdrop absolute inset-0 bg-black/70 backdrop-blur-sm ${closing ? "closing" : ""}`}
+        onClick={onClose}
+      />
       <div
         ref={sheetRef}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchCancel}
-        className="safe-bottom relative flex max-h-[85dvh] w-full max-w-xl flex-col rounded-t-2xl border border-white/10 bg-[#0b0b11] p-5 shadow-2xl sm:max-h-[80vh] sm:rounded-2xl"
+        className={`anim-sheet safe-bottom relative flex max-h-[85dvh] w-full max-w-xl flex-col rounded-t-2xl border border-white/10 bg-[#0b0b11] p-5 shadow-2xl sm:max-h-[80vh] sm:rounded-2xl ${closing ? "closing" : ""}`}
       >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-xs font-medium tracking-[0.25em] text-zinc-400 uppercase">Your library</h3>
