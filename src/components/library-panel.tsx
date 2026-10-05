@@ -12,6 +12,7 @@ import {
 } from "@/lib/library";
 import { CloseIcon, PlayIcon, PlusIcon, TrashIcon } from "./icons";
 import { formatTime } from "./queue-list";
+import { useSwipeToDismiss } from "@/hooks/use-keyboard-shortcuts";
 
 interface Props {
   onClose: () => void;
@@ -28,6 +29,8 @@ const bytes = (n: number) => {
 };
 
 export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: Props) {
+  const { sheetRef, onTouchStart, onTouchMove, onTouchEnd, onTouchCancel } =
+    useSwipeToDismiss(onClose);
   // Capability is a static, environment-level fact, so resolve it during the
   // first render rather than in an effect (which would cascade a render pass).
   // When storage is unavailable the list is permanently empty, so seed it here
@@ -122,9 +125,21 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
 
 
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center sm:items-center" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-40 flex items-end justify-center sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Your library"
+    >
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-[85dvh] w-full max-w-xl flex-col rounded-t-2xl border border-white/10 bg-[#0b0b11] p-5 shadow-2xl sm:max-h-[80vh] sm:rounded-2xl">
+      <div
+        ref={sheetRef}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchCancel}
+        className="safe-bottom relative flex max-h-[85dvh] w-full max-w-xl flex-col rounded-t-2xl border border-white/10 bg-[#0b0b11] p-5 shadow-2xl sm:max-h-[80vh] sm:rounded-2xl"
+      >
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-xs font-medium tracking-[0.25em] text-zinc-400 uppercase">Your library</h3>
           <button
@@ -242,7 +257,10 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
                 Nothing matches “{query}”.
               </p>
             ) : (
-              <ul className="-mr-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 overscroll-contain">
+              <ul
+                  data-no-swipe
+                  className="-mr-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 overscroll-contain"
+                >
                 {visible.map((t) => (
                   <li key={t.id}>
                     <div className="group flex items-center gap-3 rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-white/5 hover:bg-white/[0.03]">

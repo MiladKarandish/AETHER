@@ -29,6 +29,62 @@ html {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Safe-area insets. `viewport-fit=cover` (see layout.tsx) lets the layout extend
+ * under the notch and home indicator, so fixed UI must pad itself back out —
+ * otherwise the transport's play button lands on the iOS home bar. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  /* minimum 44px touch target, per the iOS/mobile HIG */
+  --touch: 44px;
+}
+
+/* the fixed transport sits at the bottom of the viewport */
+.safe-bottom {
+  padding-bottom: max(0.75rem, var(--safe-bottom));
+}
+
+.safe-top {
+  padding-top: max(1rem, var(--safe-top));
+}
+
+.safe-x {
+  padding-left: max(1rem, var(--safe-left));
+  padding-right: max(1rem, var(--safe-right));
+}
+
+/* Larger tap targets on coarse pointers (phones/tablets) without changing the
+ * desktop layout: buttons keep their visual size but gain a bigger hit area. */
+@media (pointer: coarse) {
+  .tap-target {
+    position: relative;
+  }
+  .tap-target::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, var(--touch));
+    height: max(100%, var(--touch));
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* Stop iOS Safari from rubber-banding the page behind fixed UI. */
+body {
+  overscroll-behavior-y: none;
+}
+
+/* Respect the notch on the landscape edges too. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .landscape-compact {
+    padding-top: max(0.5rem, var(--safe-top));
+    padding-bottom: max(0.5rem, var(--safe-bottom));
+  }
+}
+
 ::selection {
   background: rgba(255, 255, 255, 0.18);
 }

@@ -12,7 +12,7 @@ import {
   reviveNumber,
   usePersistentState,
 } from "@/hooks/use-persistent-state";
-import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useKeyboardShortcuts, useScrollLock, useSwipeToDismiss } from "@/hooks/use-keyboard-shortcuts";
 import Visualizer from "./visualizer";
 import QueueList from "./queue-list";
 import Transport, { type RepeatMode } from "./transport";
@@ -278,6 +278,12 @@ export default function MusicPlayer() {
     return () => window.clearTimeout(t);
   }, [notice]);
 
+  // Mobile drawer gestures, and stop the page scrolling behind open overlays.
+  const closeQueue = useCallback(() => setQueueOpen(false), []);
+  const { sheetRef: queueSheetRef, onTouchStart: qTouchStart, onTouchMove: qTouchMove, onTouchEnd: qTouchEnd, onTouchCancel: qTouchCancel } =
+    useSwipeToDismiss(closeQueue);
+  useScrollLock(queueOpen || libraryOpen || showShortcuts);
+
   // keyboard shortcuts — a declarative map, rebuilt only when handlers change
   const shortcuts = useMemo(
     () => ({
@@ -376,13 +382,13 @@ export default function MusicPlayer() {
 
       {/* header */}
       <header
-        className={`relative z-10 flex items-center justify-between px-4 py-5 transition-all duration-500 sm:px-8 ${
+        className={`safe-top safe-x relative z-10 flex items-center justify-between py-4 transition-all duration-500 sm:px-8 sm:py-5 ${
           immersive ? "pointer-events-none -translate-y-4 opacity-0" : ""
         }`}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <span
-            className="flex h-9 w-9 items-center justify-center rounded-xl"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
             style={{
               background: `linear-gradient(135deg, ${palette[0]}, ${palette[1]})`,
               boxShadow: `0 0 20px ${palette[1]}44`,
@@ -390,39 +396,47 @@ export default function MusicPlayer() {
           >
             <WaveIcon width={18} height={18} className="text-black" />
           </span>
-          <div>
+          <div className="min-w-0">
             <h1 className="text-sm font-semibold tracking-[0.35em] text-white">AETHER</h1>
-            <p className="text-[11px] tracking-wide text-zinc-500">generative music engine</p>
+            {/* the tagline crowds narrow phones — the logo carries the identity */}
+            <p className="hidden text-[11px] tracking-wide text-zinc-500 sm:block">
+              generative music engine
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             onClick={() => setLibraryOpen(true)}
-            className="flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
+            className="tap-target flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
           >
             <LibraryIcon width={13} height={13} />
-            Library{localCount > 0 ? ` · ${localCount}` : ""}
+            <span className="hidden min-[380px]:inline">Library</span>
+            {localCount > 0 ? ` · ${localCount}` : ""}
           </button>
           <button
             type="button"
             onClick={() => setQueueOpen(true)}
-            className="rounded-full px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:text-white lg:hidden"
+            className="tap-target rounded-full px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:text-white lg:hidden"
           >
             Queue
           </button>
+          {/* No physical keyboard on phones, so the shortcut reference is
+              desktop-only chrome. */}
           <button
             type="button"
             onClick={() => setShowShortcuts(true)}
             aria-label="Keyboard shortcuts"
-            className="rounded-full p-2 text-zinc-500 transition-colors hover:text-white"
+            className="tap-target hidden rounded-full p-2 text-zinc-500 transition-colors hover:text-white sm:block"
           >
             <KeyboardIcon width={17} height={17} />
           </button>
           <button
             type="button"
             onClick={toggleImmersive}
-            className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
+            aria-label="Toggle immersive mode"
+            aria-pressed={immersive}
+            className="tap-target rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
           >
             Immersive
           </button>
@@ -430,10 +444,12 @@ export default function MusicPlayer() {
       </header>
 
       {/* main */}
-      <main className="relative z-10 mx-auto grid w-full max-w-6xl flex-1 grid-cols-1 items-center gap-8 px-4 pb-44 sm:px-8 lg:grid-cols-[1fr_340px]">
+      {/* Bottom padding clears the fixed transport. Mobile gained a
+          now-playing strip, so it needs more clearance than desktop. */}
+      <main className="relative z-10 mx-auto grid w-full max-w-6xl flex-1 grid-cols-1 items-center gap-8 px-4 pb-56 sm:px-8 sm:pb-44 lg:grid-cols-[1fr_340px]">
         {/* now playing */}
         <section className="flex min-w-0 flex-col items-center text-center">
-          <div className="relative aspect-square w-full max-w-[420px]">
+          <div className="relative aspect-square w-full max-w-[min(420px,72vw)]">
             {/* track-change shockwave */}
             <div
               key={safeTrack.id}
@@ -498,9 +514,32 @@ export default function MusicPlayer() {
 
       {/* queue — mobile drawer */}
       {queueOpen && (
-        <div className="fixed inset-0 z-30 lg:hidden" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setQueueOpen(false)} />
-          <div className="absolute inset-x-0 bottom-0 flex max-h-[70vh] flex-col rounded-t-2xl border-t border-white/10 bg-[#0a0a0f] p-4 pb-8">
+        <div className="fixed inset-0 z-30 lg:hidden" role="dialog" aria-modal="true" aria-label="Queue">
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setQueueOpen(false)}
+          />
+          <div
+            ref={queueSheetRef}
+            onTouchStart={qTouchStart}
+            onTouchMove={qTouchMove}
+            onTouchEnd={qTouchEnd}
+            onTouchCancel={qTouchCancel}
+            className="absolute inset-x-0 bottom-0 flex max-h-[80dvh] flex-col rounded-t-2xl border-t border-white/10 bg-[#0a0a0f] p-4 safe-x safe-bottom"
+          >
+            {/* grab handle + explicit close: the backdrop alone is a poor
+                affordance on touch, and pb-8 ignored the home indicator. */}
+            <div className="mb-2 flex shrink-0 items-center justify-between">
+              <span aria-hidden="true" className="h-1 w-10 rounded-full bg-white/20" />
+              <button
+                type="button"
+                onClick={() => setQueueOpen(false)}
+                aria-label="Close queue"
+                className="tap-target -mt-1 rounded-md p-1 text-zinc-500 transition-colors hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+              >
+                <CloseIcon width={16} height={16} />
+              </button>
+            </div>
             {queuePanel}
           </div>
         </div>
@@ -511,7 +550,7 @@ export default function MusicPlayer() {
         <button
           type="button"
           onClick={toggleImmersive}
-          className="fixed top-5 right-5 z-30 rounded-full border border-white/10 bg-black/40 px-3.5 py-1.5 text-xs text-zinc-400 backdrop-blur-md transition-colors hover:border-white/25 hover:text-white"
+          className="tap-target fixed top-5 right-5 z-30 rounded-full border border-white/10 bg-black/40 px-3.5 py-1.5 text-xs text-zinc-400 backdrop-blur-md transition-colors hover:border-white/25 hover:text-white"
         >
           Exit immersive
         </button>

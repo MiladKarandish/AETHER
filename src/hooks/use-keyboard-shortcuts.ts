@@ -1,6 +1,80 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+
+/**
+ * Drag-to-dismiss for bottom sheets.
+ *
+ * On touch devices the only way out of a drawer is hunting for a close button
+ * or tapping the backdrop. This tracks a vertical drag and calls `onDismiss`
+ * once it passes a distance/velocity threshold, while letting normal scrolls
+ * inside the sheet pass through untouched.
+ */
+export function useSwipeToDismiss(onDismiss: () => void) {
+  const startY = useRef<number | null>(null);
+  const offset = useRef(0);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+
+  // Callbacks are returned individually (not as one object holding the ref) so
+  // spreading them onto JSX doesn't trip the "no refs during render" rule.
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    // Ignore drags that begin on a scrollable list, so the queue can still be
+    // scrolled by touch inside the sheet.
+    const target = e.target as HTMLElement;
+    if (target.closest("[data-no-swipe]")) return;
+    startY.current = e.touches[0].clientY;
+    offset.current = 0;
+  }, []);
+
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    if (startY.current === null) return;
+    const dy = e.touches[0].clientY - startY.current;
+    // only drag downward — upward movement belongs to the list
+    if (dy <= 0) {
+      offset.current = 0;
+      return;
+    }
+    offset.current = dy;
+    const sheet = sheetRef.current;
+    if (sheet) {
+      sheet.style.transform = `translateY(${dy}px)`;
+      sheet.style.transition = "none";
+    }
+  }, []);
+
+  const end = useCallback(() => {
+    const sheet = sheetRef.current;
+    const dy = offset.current;
+    startY.current = null;
+    offset.current = 0;
+    if (sheet) {
+      sheet.style.transition = "transform 0.2s ease-out";
+      // Dismiss far enough down, or animate back into place.
+      sheet.style.transform = dy > 110 ? "translateY(100%)" : "translateY(0)";
+    }
+    if (dy > 110) onDismiss();
+  }, [onDismiss]);
+
+  return { sheetRef, onTouchStart, onTouchMove, onTouchEnd: end, onTouchCancel: end };
+}
+
+/** Locks body scroll while a modal/drawer is open, without layout shift. */
+export function useScrollLock(active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+    const { body } = document;
+    const previousOverflow = body.style.overflow;
+    const previousPadding = body.style.paddingRight;
+    // compensate for the removed scrollbar so the page doesn't jump
+    const gap = window.innerWidth - document.documentElement.clientWidth;
+    body.style.overflow = "hidden";
+    if (gap > 0) body.style.paddingRight = `${gap}px`;
+    return () => {
+      body.style.overflow = previousOverflow;
+      body.style.paddingRight = previousPadding;
+    };
+  }, [active]);
+}
 
 /** Keys we never hijack, so typing/selecting in a control still works. */
 const EDITABLE = new Set(["INPUT", "TEXTAREA", "SELECT"]);

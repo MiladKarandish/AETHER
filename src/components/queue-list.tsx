@@ -26,7 +26,12 @@ export default function QueueList({ tracks, currentId, playing, liked, onSelect,
         <h2 className="text-xs font-medium tracking-[0.25em] text-zinc-500 uppercase">Queue</h2>
         <span className="text-xs text-zinc-600">{tracks.length} transmissions</span>
       </div>
-      <ul className="flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1 pb-4">
+      {/* data-no-swipe keeps touch-dragging here scrolling the queue instead of
+          dragging the whole sheet down. */}
+      <ul
+        data-no-swipe
+        className="flex-1 space-y-1 overflow-y-auto overscroll-contain pr-1 pb-4"
+      >
         {tracks.map((track, i) => {
           const isCurrent = track.id === currentId;
           return (

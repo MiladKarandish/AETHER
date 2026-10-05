@@ -200,6 +200,23 @@ Bound in `src/hooks/use-keyboard-shortcuts.ts` and listed in the in-app panel to
 - **Persisted settings** — volume, mute, likes, shuffle, repeat mode, mixer levels, and last
   index in `localStorage`.
 
+## Mobile
+
+The layout is built mobile-first and adapts at the `sm` (640px) and `lg` (1024px)
+breakpoints. Phone-specific behaviour:
+
+- **Safe areas** — `viewport-fit=cover` plus `--safe-*` CSS variables keep the fixed
+  transport, drawers and header clear of the notch and the iOS home indicator.
+- **Now-playing strip** — below `sm` the transport shows the current track and a like
+  button, since the desktop side column is hidden at that width.
+- **Touch targets** — `.tap-target` enlarges hit areas to at least 44px on coarse
+  pointers without changing the visual size on desktop.
+- **Swipe to dismiss** — both bottom sheets (queue and library) can be dragged down to
+  close; drags starting inside a scrollable list still scroll normally.
+- **Scroll locking** — the page behind an open drawer or modal is locked, with
+  scrollbar-width compensation so nothing shifts.
+- **Landscape** — short viewports get compact padding via a `max-height` media query.
+
 ## Project layout
 
 ```
