@@ -25,7 +25,17 @@ import Transport, { type RepeatMode } from "./transport";
 import LibraryPanel from "./library-panel";
 import MixerPanel from "./mixer-panel";
 import ScoreView from "./score-view";
-import { CloseIcon, DiceIcon, DownloadIcon, KeyboardIcon, LibraryIcon, SlidersIcon, WaveIcon } from "./icons";
+import {
+  CloseIcon,
+  DiceIcon,
+  DownloadIcon,
+  ExpandIcon,
+  KeyboardIcon,
+  LibraryIcon,
+  QueueIcon,
+  SlidersIcon,
+  WaveIcon,
+} from "./icons";
 
 const SHORTCUTS: [string, string][] = [
   ["Space", "Play / pause"],
@@ -471,7 +481,9 @@ export default function MusicPlayer() {
           immersive ? "pointer-events-none -translate-y-4 opacity-0" : ""
         }`}
       >
-        <div className="flex min-w-0 items-center gap-3">
+        {/* Brand: must never be squeezed — the letterspacing needs ~84px and
+            the action row needs the room more than a truncation does. */}
+        <div className="flex shrink-0 items-center gap-3">
           <span
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
             style={{
@@ -481,30 +493,38 @@ export default function MusicPlayer() {
           >
             <WaveIcon width={18} height={18} className="text-black" />
           </span>
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold tracking-[0.35em] text-white">AETHER</h1>
-            {/* the tagline crowds narrow phones — the logo carries the identity */}
+          {/* One heading at every width; only the tagline drops on phones. */}
+          <div>
+            <h1 className="text-sm font-semibold tracking-[0.3em] text-white sm:tracking-[0.35em]">
+              AETHER
+            </h1>
             <p className="hidden text-[11px] tracking-wide text-zinc-500 sm:block">
               generative music engine
             </p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+
+        {/* Actions collapse to icons below `sm` so they never crowd the brand. */}
+        <div className="flex min-w-0 shrink items-center justify-end gap-0.5 sm:shrink-0 sm:gap-1">
           <button
             type="button"
             onClick={() => setLibraryOpen(true)}
-            className="press tap-target flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
+            aria-label="Open library"
+            className="press tap-target flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-white/10 text-zinc-400 transition-colors hover:border-white/25 hover:text-white sm:h-auto sm:w-auto sm:rounded-full sm:px-3 sm:py-1.5"
           >
-            <LibraryIcon width={13} height={13} />
-            <span className="hidden min-[380px]:inline">Library</span>
-            {localCount > 0 ? ` · ${localCount}` : ""}
+            <LibraryIcon width={16} height={16} />
+            <span className="hidden text-xs sm:inline">
+              Library{localCount > 0 ? ` · ${localCount}` : ""}
+            </span>
           </button>
           <button
             type="button"
             onClick={() => setQueueOpen(true)}
-            className="press tap-target rounded-full px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:text-white lg:hidden"
+            aria-label="Open queue"
+            className="press tap-target flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 rounded-xl text-zinc-400 transition-colors hover:text-white lg:hidden sm:h-auto sm:w-auto sm:px-3 sm:py-1.5"
           >
-            Queue
+            <QueueIcon width={16} height={16} />
+            <span className="hidden text-xs sm:inline">Queue</span>
           </button>
           {/* Per-instrument mixer — only meaningful for generated tracks, since imported
               files arrive as a single already-mixed stream. */}
@@ -513,7 +533,7 @@ export default function MusicPlayer() {
               type="button"
               onClick={() => setMixerOpen(true)}
               aria-label="Open mixer"
-              className="press tap-target rounded-full p-2 text-zinc-500 transition-colors hover:text-white"
+              className="press tap-target flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-zinc-500 transition-colors hover:text-white"
             >
               <SlidersIcon width={17} height={17} />
             </button>
@@ -533,9 +553,10 @@ export default function MusicPlayer() {
             onClick={toggleImmersive}
             aria-label="Toggle immersive mode"
             aria-pressed={immersive}
-            className="press tap-target rounded-full border border-white/10 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-white/25 hover:text-white"
+            className="press tap-target flex h-9 w-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-white/10 text-zinc-400 transition-colors hover:border-white/25 hover:text-white sm:h-auto sm:w-auto sm:rounded-full sm:px-3 sm:py-1.5"
           >
-            Immersive
+            <ExpandIcon width={16} height={16} />
+            <span className="hidden text-xs sm:inline">Immersive</span>
           </button>
         </div>
       </header>
