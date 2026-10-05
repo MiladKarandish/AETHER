@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/.vitest/
+/test-results/
 
 # next.js
 /.next/
@@ -23,6 +25,9 @@
 # misc
 .DS_Store
 *.pem
+
+# local provider credentials — never commit (rotate any that ever were)
+providers.txt
 
 # debug
 npm-debug.log*

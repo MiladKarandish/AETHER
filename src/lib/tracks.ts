@@ -156,7 +156,7 @@ export const TRACKS: Track[] = [
   },
 ];
 
-function mulberry32(seed: number) {
+export const mulberry32 = (seed: number) => {
   let a = seed >>> 0;
   return () => {
     a |= 0;
@@ -165,7 +165,7 @@ function mulberry32(seed: number) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
+};
 
 const PROGRESSIONS = [
   [0, 5, 3, 4],
@@ -286,6 +286,43 @@ export function compose(track: Track): ScoreEvent[] {
   }
 
   events.sort((a, b) => a.t - b.t);
+  return events;
+}
+/**
+ * Derive a remixed track: same title/album/palette/params, new seed.
+ * The variation counter is baked into the id so the queue/likes stay consistent.
+ */
+export function remixTrack(track: Track, variation: number): Track {
+  return {
+    ...track,
+    id: `${track.id}#v${variation}`,
+    seed: (track.seed ^ (variation * 0x9e3779b9)) >>> 0,
+  };
+}
+
+/** Extract the variation index from a (possibly remixed) track id. */
+export function variationOf(id: string): number {
+  const m = /#v(\d+)$/.exec(id);
+  return m ? Number(m[1]) : 0;
+}
+
+/* ——— compose cache ———
+ * compose() is pure and expensive; the player re-loads tracks on
+ * selection changes, so memoize by seed+params. */
+const composeCache = new Map<string, ScoreEvent[]>();
+
+const cacheKey = (t: Track) => `${t.seed}|${t.root}|${t.bpm}|${t.duration}|${t.scale.join(",")}`;
+
+export function composeCached(track: Track): ScoreEvent[] {
+  const key = cacheKey(track);
+  const hit = composeCache.get(key);
+  if (hit) return hit;
+  const events = compose(track);
+  if (composeCache.size >= 16) {
+    // drop the oldest entry (insertion order) — keeps memory bounded
+    composeCache.delete(composeCache.keys().next().value as string);
+  }
+  composeCache.set(key, events);
   return events;
 }
 

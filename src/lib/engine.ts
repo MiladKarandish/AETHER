@@ -1,8 +1,29 @@
-import { compose, type ScoreEvent, type Track } from "./tracks";
+import { composeCached, type ScoreEvent, type Track } from "./tracks";
 import type { LocalTrack } from "./local-track";
 
 const LOOKAHEAD = 0.35;
+/**
+ * Background tabs throttle `setInterval` to >=1s, which starves a 0.35s
+ * look-ahead window and causes audible dropouts. When the document is hidden
+ * we widen the window so the scheduler can pre-schedule far enough ahead to
+ * survive throttling; it tightens again on return to visible.
+ */
+const LOOKAHEAD_HIDDEN = 2.5;
 const TICK_MS = 60;
+
+/** Per-instrument mixer channels, exposed via setStemGain(). */
+export type Stem = "pad" | "pluck" | "bass" | "kick" | "snare" | "hat";
+
+const STEMS: readonly Stem[] = ["pad", "pluck", "bass", "kick", "snare", "hat"];
+
+const DEFAULT_STEM_GAINS: Record<Stem, number> = {
+  pad: 1,
+  pluck: 1,
+  bass: 1,
+  kick: 1,
+  snare: 1,
+  hat: 1,
+};
 
 interface Voice {
   srcs: AudioScheduledSourceNode[];
@@ -34,6 +55,16 @@ export class AudioEngine {
   private _volume = 0.8;
   private _muted = false;
   private finished = false;
+
+  /** Per-instrument mixer gains; each stem routes into `stems` -> bus. */
+  private stems: Partial<Record<Stem, GainNode>> = {};
+  private stemGains = { ...DEFAULT_STEM_GAINS };
+  private visibilityListener: (() => void) | null = null;
+  private hidden = false;
+  /** A seek requested before a local file's metadata was available. */
+  private pendingSeek: number | null = null;
+  /** True while a sleep-timer fade-out is in progress. */
+  private _faded = false;
 
   // ——— local file playback (offline library) ———
   private mode: "synth" | "local" = "synth";
@@ -93,12 +124,13 @@ export class AudioEngine {
     this.pauseLocalEl();
     this.mode = "synth";
     this.localTrack = null;
-    this.events = compose(track);
+    this.events = composeCached(track);
     this.duration = track.duration;
     this.offset = 0;
     this.idx = 0;
     this._playing = false;
     this.finished = false;
+    this.pendingSeek = null;
   }
 
   /**
@@ -118,6 +150,7 @@ export class AudioEngine {
     this.idx = 0;
     this._playing = false;
     this.finished = false;
+    this.pendingSeek = null;
     const el = this.getEl();
     el.src = t.url;
     el.load();
@@ -140,6 +173,11 @@ export class AudioEngine {
     el.addEventListener("loadedmetadata", () => {
       if (Number.isFinite(el.duration) && el.duration > 0) {
         this.duration = el.duration;
+        // apply any seek that arrived before the duration was known
+        if (this.pendingSeek !== null) {
+          el.currentTime = clamp(this.pendingSeek, 0, el.duration);
+          this.pendingSeek = null;
+        }
         this.onDurationChanged?.(this.localTrack?.id ?? "", el.duration);
       }
     });
@@ -217,9 +255,18 @@ export class AudioEngine {
   seek(t: number) {
     if (this.mode === "local") {
       const el = this.el;
-      const max = this.duration || el?.duration || 0;
-      if (el) el.currentTime = clamp(t, 0, max);
-      this.duration = max;
+      // Prefer the element's own duration: `this.duration` is 0 until the
+      // file's metadata has loaded, which would clamp every seek to zero.
+      const meta = el && Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 0;
+      const max = meta || this.duration || 0;
+      if (el && max > 0) {
+        el.currentTime = clamp(t, 0, max);
+        this.pendingSeek = null;
+      } else if (el && t > 0) {
+        // metadata not ready yet — apply once `loadedmetadata` reports back
+        this.pendingSeek = t;
+      }
+      if (max > 0) this.duration = max;
       return;
     }
     const target = clamp(t, 0, this.duration);
@@ -245,16 +292,54 @@ export class AudioEngine {
     this.applyGain();
   }
 
+  /** Per-instrument level, 0..1. Takes effect immediately if the context exists. */
+  setStemGain(stem: Stem, v: number) {
+    const gain = clamp(v, 0, 1);
+    this.stemGains[stem] = gain;
+    const node = this.stems[stem];
+    if (node && this.ctx) {
+      node.gain.setTargetAtTime(gain, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  /** Current per-instrument levels, for restoring persisted mixer settings. */
+  getStemGains(): Record<Stem, number> {
+    return { ...this.stemGains };
+  }
+
+  /** Fade the master bus down to silence over `seconds` (sleep timer). */
+  fadeOut(seconds: number) {
+    if (!this.master || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const dur = Math.max(0.1, seconds);
+    this.master.gain.cancelScheduledValues(now);
+    this.master.gain.setValueAtTime(this.master.gain.value, now);
+    this.master.gain.linearRampToValueAtTime(0, now + dur);
+    this._faded = true;
+    // restore the normal level once the ramp completes, so the next
+    // play() is audible without the caller doing anything
+    window.setTimeout(() => {
+      if (!this._faded) return;
+      this._faded = false;
+      this.applyGain();
+    }, dur * 1000 + 50);
+  }
+
   destroy() {
     this.stopTimer();
     this.stopAllVoices(0.03);
     this.pauseLocalEl();
+    if (this.visibilityListener) {
+      document.removeEventListener("visibilitychange", this.visibilityListener);
+      this.visibilityListener = null;
+    }
     if (this.el) {
       this.el.removeAttribute("src");
       this.el.load();
     }
     this.el = null;
     this.srcEl = null;
+    this.stems = {};
     void this.ctx?.close().catch(() => undefined);
     this.ctx = null;
   }
@@ -284,8 +369,25 @@ export class AudioEngine {
     this.bus.connect(wet);
     wet.connect(conv);
     conv.connect(this.master);
+
+    // per-instrument sub-buses, each feeding the note bus so stems keep
+    // their share of the reverb send
+    for (const stem of STEMS) {
+      const g = ctx.createGain();
+      g.gain.value = this.stemGains[stem];
+      g.connect(this.bus);
+      this.stems[stem] = g;
+    }
+
     this.master.connect(this.analyser);
     this.analyser.connect(ctx.destination);
+
+    // react to tab visibility so the scheduler can widen its look-ahead
+    this.hidden = document.visibilityState === "hidden";
+    this.visibilityListener = () => {
+      this.hidden = document.visibilityState === "hidden";
+    };
+    document.addEventListener("visibilitychange", this.visibilityListener);
 
     // shared noise buffer for percussion
     const len = ctx.sampleRate;
@@ -356,7 +458,10 @@ export class AudioEngine {
     if (!this._playing || !this.ctx) return;
     const now = this.ctx.currentTime;
     const pos = this.position;
-    while (this.idx < this.events.length && this.events[this.idx].t < pos + LOOKAHEAD) {
+    // Background tabs throttle timers; widen the window so already-scheduled
+    // audio covers the gap instead of stuttering.
+    const lookahead = this.hidden ? LOOKAHEAD_HIDDEN : LOOKAHEAD;
+    while (this.idx < this.events.length && this.events[this.idx].t < pos + lookahead) {
       const ev = this.events[this.idx++];
       const when = Math.max(now + 0.02, this.startedAt + (ev.t - this.offset));
       this.playEvent(ev, when);
@@ -393,6 +498,11 @@ export class AudioEngine {
         break;
     }
   }
+  /** The sub-bus for an instrument, falling back to the main bus pre-context. */
+  private stem(name: Stem): AudioNode {
+    return this.stems[name] ?? this.bus!;
+  }
+
   /** Registers a voice so pause/seek can stop it click-free; auto-prunes on end. */
   private track(srcs: AudioScheduledSourceNode[], gain: GainNode) {
     const voice: Voice = { srcs, gain };
@@ -407,7 +517,7 @@ export class AudioEngine {
     const ctx = this.ctx!;
     const out = ctx.createGain();
     out.gain.value = 1;
-    out.connect(this.bus!);
+    out.connect(this.stem("pad"));
     const env = ctx.createGain();
     const peak = v * 0.09;
     env.gain.setValueAtTime(0, t);
@@ -438,7 +548,7 @@ export class AudioEngine {
     const ctx = this.ctx!;
     const out = ctx.createGain();
     out.gain.value = 1;
-    out.connect(this.bus!);
+    out.connect(this.stem("pluck"));
     const env = ctx.createGain();
     const dur = Math.max(d, 0.4);
     env.gain.setValueAtTime(0, t);
@@ -462,7 +572,7 @@ export class AudioEngine {
     const ctx = this.ctx!;
     const out = ctx.createGain();
     out.gain.value = 1;
-    out.connect(this.bus!);
+    out.connect(this.stem("bass"));
     const env = ctx.createGain();
     env.gain.setValueAtTime(0, t);
     env.gain.linearRampToValueAtTime(v * 0.34, t + 0.02);
@@ -494,7 +604,7 @@ export class AudioEngine {
     const ctx = this.ctx!;
     const out = ctx.createGain();
     out.gain.value = 1;
-    out.connect(this.bus!);
+    out.connect(this.stem("kick"));
     const env = ctx.createGain();
     env.gain.setValueAtTime(v * 0.9, t);
     env.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
@@ -513,7 +623,7 @@ export class AudioEngine {
     const ctx = this.ctx!;
     const out = ctx.createGain();
     out.gain.value = 1;
-    out.connect(this.bus!);
+    out.connect(this.stem("snare"));
     // noise burst
     const env = ctx.createGain();
     env.gain.setValueAtTime(v * 0.3, t);
@@ -547,7 +657,7 @@ export class AudioEngine {
     const ctx = this.ctx!;
     const out = ctx.createGain();
     out.gain.value = 1;
-    out.connect(this.bus!);
+    out.connect(this.stem("hat"));
     const env = ctx.createGain();
     env.gain.setValueAtTime(v * 0.14, t);
     env.gain.exponentialRampToValueAtTime(0.001, t + 0.055);

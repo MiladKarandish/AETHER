@@ -1,12 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  importFileSafe,
+  isLibrarySupported,
   listLibrary,
   removeFromLibrary,
+  repairLibrary,
+  storageUsage,
   type LibraryTrack,
 } from "@/lib/library";
-import { CloseIcon, PlayIcon, TrashIcon } from "./icons";
+import { CloseIcon, PlayIcon, PlusIcon, TrashIcon } from "./icons";
+import { formatTime } from "./queue-list";
+
 interface Props {
   onClose: () => void;
   onPlay: (t: LibraryTrack) => void;
@@ -14,22 +20,105 @@ interface Props {
   currentId: string;
 }
 
+const bytes = (n: number) => {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return `${(n / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+};
+
 export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: Props) {
-  const [tracks, setTracks] = useState<LibraryTrack[] | null>(null);
+  // Capability is a static, environment-level fact, so resolve it during the
+  // first render rather than in an effect (which would cascade a render pass).
+  // When storage is unavailable the list is permanently empty, so seed it here
+  // too instead of setting it from an effect.
+  const [supported] = useState(() => isLibrarySupported());
+  const [tracks, setTracks] = useState<LibraryTrack[] | null>(() =>
+    isLibrarySupported() ? null : [],
+  );
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const refreshUsage = useCallback(() => {
+    void storageUsage().then(setUsage);
+  }, []);
 
   useEffect(() => {
+    if (!supported) return;
     let alive = true;
-    listLibrary().then((t) => alive && setTracks(t));
+    listLibrary()
+      .then((t) => {
+        if (alive) setTracks(t);
+      })
+      .catch(() => {
+        if (alive) setTracks([]);
+      });
+    refreshUsage();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [refreshUsage, supported]);
+
+  // Reclaim quota held by files whose metadata row never landed.
+  const repair = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await repairLibrary();
+      setTracks(await listLibrary());
+      refreshUsage();
+    } catch {
+      setError("Could not repair the library.");
+    } finally {
+      setBusy(false);
+    }
+  }, [refreshUsage]);
+
+  const addFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const audio = Array.from(files).filter((f) => f.type.startsWith("audio/"));
+      if (audio.length === 0) {
+        setError("Those files don't look like audio.");
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      const added: LibraryTrack[] = [];
+      for (const file of audio) {
+        const t = await importFileSafe(file);
+        if (t) added.push(t);
+        else setError(`Couldn't import ${file.name}.`);
+      }
+      if (added.length > 0) {
+        setTracks((prev) => {
+          const have = new Set((prev ?? []).map((t) => t.id));
+          return [...(prev ?? []), ...added.filter((t) => !have.has(t.id))];
+        });
+      }
+      refreshUsage();
+      setBusy(false);
+    },
+    [refreshUsage],
+  );
 
   const remove = async (t: LibraryTrack) => {
-    await removeFromLibrary(t.id.slice("library:".length));
     setTracks((prev) => prev?.filter((x) => x.id !== t.id) ?? null);
     onRemoved(t.id);
+    try {
+      await removeFromLibrary(t.id.slice("library:".length));
+    } finally {
+      refreshUsage();
+    }
   };
+
+  const q = query.trim().toLowerCase();
+  const visible = (tracks ?? []).filter(
+    (t) => !q || t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q),
+  );
 
 
   return (
@@ -48,7 +137,73 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
           </button>
         </div>
 
-        {tracks === null ? (
+        {/* import — the write path this library was missing */}
+        {supported && (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files);
+            }}
+            className={`mb-3 rounded-xl border border-dashed p-3 transition-colors ${
+              dragging ? "border-white/30 bg-white/[0.06]" : "border-white/10"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={busy}
+                className="flex items-center gap-2 rounded-full border border-white/15 px-3 py-1.5 text-xs text-zinc-300 transition-colors hover:border-white/40 hover:text-white disabled:opacity-50"
+              >
+                <PlusIcon width={13} height={13} />
+                {busy ? "Importing…" : "Add audio files"}
+              </button>
+              <span className="text-[11px] text-zinc-600">or drop them here</span>
+              <button
+                type="button"
+                onClick={repair}
+                disabled={busy}
+                className="ml-auto text-[11px] text-zinc-600 underline-offset-2 transition-colors hover:text-zinc-400 hover:underline disabled:opacity-50"
+              >
+                Repair storage
+              </button>
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="audio/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) void addFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </div>
+        )}
+
+        {error && (
+          <p role="alert" className="mb-2 text-xs text-amber-400/90">
+            {error}
+          </p>
+        )}
+
+        {!supported ? (
+          <div className="px-2 py-10 text-center">
+            <p className="text-sm text-zinc-400">Offline storage isn’t available.</p>
+            <p className="mx-auto mt-2 max-w-sm text-xs leading-relaxed text-zinc-600">
+              This browser blocks IndexedDB or the Origin Private File System —
+              common in private windows and some embedded browsers. The
+              generative engine still works; only the local library is off.
+            </p>
+          </div>
+        ) : tracks === null ? (
           <ul className="space-y-2">
             {[0, 1, 2].map((i) => (
               <li key={i} className="flex items-center gap-3">
@@ -63,19 +218,34 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
           <div className="px-2 py-10 text-center">
             <p className="text-sm text-zinc-400">Your library is empty.</p>
             <p className="mx-auto mt-2 max-w-sm text-xs leading-relaxed text-zinc-600">
-              Tracks saved here live in this browser and play offline, right
-              alongside the generative engine.
+              Add some audio above — it’s stored in this browser and plays
+              offline, right alongside the generative engine.
             </p>
           </div>
         ) : (
           <>
-            <p className="mb-2 text-[11px] text-zinc-600">
-              {tracks.length} track{tracks.length === 1 ? "" : "s"} · stored offline in this browser
-            </p>
-            <ul className="-mr-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 overscroll-contain">
-              {tracks.map((t) => (
-                <li key={t.id}>
-                  <div className="group flex items-center gap-3 rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-white/5 hover:bg-white/[0.03]">
+            <div className="mb-2 flex items-center gap-2">
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search library"
+                aria-label="Search library"
+                className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+              />
+              <span className="shrink-0 text-[11px] text-zinc-600">
+                {visible.length}/{tracks.length}
+              </span>
+            </div>
+            {visible.length === 0 ? (
+              <p className="px-2 py-8 text-center text-xs text-zinc-600">
+                Nothing matches “{query}”.
+              </p>
+            ) : (
+              <ul className="-mr-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 overscroll-contain">
+                {visible.map((t) => (
+                  <li key={t.id}>
+                    <div className="group flex items-center gap-3 rounded-xl border border-transparent px-2 py-2 transition-colors hover:border-white/5 hover:bg-white/[0.03]">
                     <span
                       className="h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-white/5"
                       style={{
@@ -93,6 +263,9 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
                       </span>
                       <span className="block truncate text-xs text-zinc-600">{t.artist}</span>
                     </span>
+                    <span className="text-xs tabular-nums text-zinc-700">
+                      {t.duration > 0 ? formatTime(t.duration) : "—"}
+                    </span>
                     <button
                       type="button"
                       aria-label={`Remove ${t.title} from library`}
@@ -109,14 +282,16 @@ export default function LibraryPanel({ onClose, onPlay, onRemoved, currentId }: 
                     >
                       <PlayIcon width={14} height={14} />
                     </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </>
         )}
 
         <p className="mt-3 text-center text-[10px] text-zinc-700">
+          {usage && usage.quota > 0 ? `${bytes(usage.used)} of ${bytes(usage.quota)} used · ` : null}
           Stored offline in this browser — plays without a network connection.
         </p>
       </div>

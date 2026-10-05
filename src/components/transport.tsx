@@ -66,9 +66,11 @@ export default function Transport(props: Props) {
             ref={barRef}
             role="slider"
             aria-label="Seek"
+            aria-orientation="horizontal"
             aria-valuemin={0}
             aria-valuemax={Math.round(track.duration)}
             aria-valuenow={Math.round(shown)}
+            aria-valuetext={`${formatTime(shown)} of ${formatTime(track.duration)}`}
             tabIndex={0}
             className="group relative h-6 flex-1 cursor-pointer touch-none"
             onPointerDown={(e) => {

@@ -1,10 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TRACKS } from "@/lib/tracks";
-import { AudioEngine } from "@/lib/engine";
 import { isLocal, type PlayerTrack } from "@/lib/local-track";
-import { listLibrary } from "@/lib/library";
+import { listLibrary, revokeLibraryUrls } from "@/lib/library";
+import { usePlayerQueue } from "@/hooks/use-player-queue";
+import { useAudioEngine, useStems, withLiveDuration } from "@/hooks/use-audio-engine";
+import {
+  reviveFlag,
+  reviveIdSet,
+  reviveNumber,
+  usePersistentState,
+} from "@/hooks/use-persistent-state";
+import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import Visualizer from "./visualizer";
 import QueueList from "./queue-list";
 import Transport, { type RepeatMode } from "./transport";
@@ -26,344 +34,307 @@ const SHORTCUTS: [string, string][] = [
 ];
 
 export default function MusicPlayer() {
-  const [engine] = useState(() => new AudioEngine());
-  const [index, setIndex] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [position, setPosition] = useState(0);
-  const [volume, setVolume] = useState(0.8);
-  const [muted, setMuted] = useState(false);
-  const [shuffle, setShuffle] = useState(false);
-  const [repeat, setRepeat] = useState<RepeatMode>("off");
-  const [liked, setLiked] = useState<ReadonlySet<string>>(new Set());
-  const [analyserNode, setAnalyserNode] = useState<AnalyserNode | null>(null);
   const [immersive, setImmersive] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const [queue, setQueue] = useState<PlayerTrack[]>(TRACKS);
-  /** real duration reported by a local file once metadata loads */
-  const [liveDuration, setLiveDuration] = useState<{ id: string; d: number } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const track = queue[index] ?? TRACKS[0];
-  const displayTrack =
-    liveDuration && liveDuration.id === track.id && liveDuration.d > 0
-      ? { ...track, duration: liveDuration.d }
-      : track;
-  const palette = track.palette;
+  const {
+    queue,
+    index,
+    current: track,
+    shuffle,
+    repeat,
+    setShuffle,
+    setRepeat,
+    setIndex,
+    advance,
+    select,
+    reportError,
+    cycleRepeat,
+    playNow,
+    removeAt,
+    mergeLibrary,
+    queueRef,
+    indexRef,
+  } = usePlayerQueue(TRACKS);
+
+  const safeTrack = track ?? TRACKS[0];
+  const {
+    engine,
+    playing,
+    position,
+    analyserNode,
+    liveDuration,
+    requestPlay,
+    setPlaying,
+    play,
+    pause,
+    toggle,
+    seek,
+  } = useAudioEngine(safeTrack);
+
+  useStems(engine);
+
+  const [volume, setVolume] = usePersistentState("aether:volume", 0.8, reviveNumber);
+  const [muted, setMuted] = usePersistentState("aether:muted", false, reviveFlag);
+  const [liked, setLiked] = usePersistentState<ReadonlySet<string>>(
+    "aether:liked",
+    new Set<string>(),
+    reviveIdSet,
+  );
+
+  const displayTrack = withLiveDuration(safeTrack, liveDuration);
+  const palette = safeTrack.palette;
   const localCount = queue.filter(isLocal).length;
-  const stateRef = useRef({ shuffle, repeat, index, queueLen: queue.length });
-  const queueRef = useRef(queue);
-  const pendingPlay = useRef(false);
 
-  // keep an imperative snapshot for callbacks that must not re-bind
+  // Restore shuffle / repeat / last index once, before any persistence runs.
+  const hydrated = useRef(false);
   useEffect(() => {
-    stateRef.current = { shuffle, repeat, index, queueLen: queue.length };
-  }, [shuffle, repeat, index, queue.length]);
+    try {
+      if (localStorage.getItem("aether:shuffle") === "1") setShuffle(true);
+      const r = localStorage.getItem("aether:repeat");
+      if (r === "off" || r === "all" || r === "one") setRepeat(r as RepeatMode);
+      const i = localStorage.getItem("aether:index");
+      const n = i !== null ? Number(i) : NaN;
+      if (Number.isInteger(n) && n >= 0 && n < TRACKS.length) setIndex(n);
+    } catch {
+      /* ignore corrupt storage */
+    } finally {
+      // Only allow writes after the saved values have been read, otherwise this
+      // effect would clobber them with the defaults on first mount.
+      hydrated.current = true;
+    }
+    // hydrate once on mount only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist the settings the queue hook owns, so shuffle/repeat survive reload.
   useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
+    if (!hydrated.current) return;
+    try {
+      localStorage.setItem("aether:shuffle", shuffle ? "1" : "0");
+      localStorage.setItem("aether:repeat", repeat);
+      localStorage.setItem("aether:index", String(index));
+    } catch {
+      /* storage unavailable — preferences just won't persist */
+    }
+  }, [index, repeat, shuffle]);
 
   // load the offline library into the tail of the queue on mount
   useEffect(() => {
     let alive = true;
-    listLibrary().then((lib) => {
-      if (!alive || lib.length === 0) return;
-      setQueue((q) => [...q, ...lib.filter((l) => !q.some((x) => x.id === l.id))]);
-    });
+    listLibrary()
+      .then((lib) => {
+        if (alive && lib.length > 0) mergeLibrary(lib);
+      })
+      .catch(() => {
+        /* listLibrary already degrades to [] — belt and braces */
+      });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [mergeLibrary]);
 
-  // restore persisted settings
+  // Release every blob: URL this session minted when the player unmounts.
   useEffect(() => {
-    try {
-      const v = localStorage.getItem("aether:volume");
-      if (v !== null) {
-        const n = Number(v);
-        if (Number.isFinite(n)) {
-          // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from storage
-          setVolume(n);
-          engine.setVolume(n);
-        }
-      }
-      const m = localStorage.getItem("aether:muted");
-      if (m === "1") {
-         
-        setMuted(true);
-        engine.setMuted(true);
-      }
-      const l = localStorage.getItem("aether:liked");
-      if (l) {
-         
-        setLiked(new Set(JSON.parse(l) as string[]));
-      }
-      const i = localStorage.getItem("aether:index");
-      const n = i !== null ? Number(i) : 0;
-      if (Number.isInteger(n) && n >= 0 && n < TRACKS.length) setIndex(n);
-    } catch {
-      /* ignore corrupt storage */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const onPageHide = () => revokeLibraryUrls();
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("pagehide", onPageHide);
+      revokeLibraryUrls();
+    };
   }, []);
 
-  // load track whenever selection changes
+  // Push restored volume / mute into the audio context.
   useEffect(() => {
-    const t = queue[index] ?? TRACKS[0];
-    if (isLocal(t)) engine.loadLocal(t);
-    else engine.load(t);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset transport state for the new track
-    setPosition(0);
-    setLiveDuration(null);
-    setPlaying(false);
-    localStorage.setItem("aether:index", String(index));
-    if (pendingPlay.current) {
-      pendingPlay.current = false;
-      void engine.play().then(() => setAnalyserNode(engine.getAnalyser()));
-      setPlaying(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only on selection change, not on queue identity updates
-  }, [engine, index]);
+    engine.setVolume(volume);
+  }, [engine, volume]);
+  useEffect(() => {
+    engine.setMuted(muted);
+  }, [engine, muted]);
 
-  const play = useCallback(async () => {
-    await engine.play();
-    setPlaying(true);
-    setAnalyserNode(engine.getAnalyser());
-  }, [engine]);
-
-  const pause = useCallback(() => {
-    engine.pause();
-    setPlaying(false);
-  }, [engine]);
-
-  const toggle = useCallback(() => {
-    if (engine.playing) pause();
-    else void play();
-  }, [engine, pause, play]);
-
-  const pickNextIndex = useCallback((dir: 1 | -1) => {
-    const { shuffle: sh, index: cur, queueLen } = stateRef.current;
-    if (sh && queueLen > 1) {
-      let n = cur;
-      while (n === cur) n = Math.floor(Math.random() * queueLen);
-      return n;
-    }
-    return (cur + dir + queueLen) % queueLen;
-  }, []);
-
-  const next = useCallback(() => setIndex(pickNextIndex(1)), [pickNextIndex]);
-
-  const prev = useCallback(() => {
-    if (engine.position > 3) {
-      engine.seek(0);
-      setPosition(0);
-    } else {
-      setIndex(pickNextIndex(-1));
-    }
-  }, [engine, pickNextIndex]);
   // what happens when a track finishes
   useEffect(() => {
     engine.setOnEnded(() => {
-      const { repeat: rep, shuffle: sh, index: cur, queueLen } = stateRef.current;
-      if (rep === "one") {
+      const len = queueRef.current.length;
+      const cur = indexRef.current;
+      if (repeat === "one") {
         engine.seek(0);
         void engine.play();
-        setPosition(0);
         setPlaying(true);
-      } else if (rep === "all" || sh || cur < queueLen - 1) {
+        return;
+      }
+      const atEnd = cur >= len - 1;
+      if (repeat === "all" || shuffle || !atEnd) {
+        // auto-advance must keep playing: flag the next track to resume
+        requestPlay();
         setPlaying(false);
-        if (sh) setIndex(pickNextIndex(1));
-        else if (cur < queueLen - 1) setIndex(cur + 1);
-        else setIndex(0);
+        advance(1);
       } else {
         setPlaying(false);
-        const t = queueRef.current[cur];
-        setPosition(t?.duration ?? 0);
       }
     });
     return () => {
       engine.setOnEnded(null);
     };
-  }, [engine, pickNextIndex]);
+  }, [advance, engine, indexRef, requestPlay, queueRef, repeat, setPlaying, shuffle]);
 
-  // local track lifecycle: real duration + skip on failure
+  // a local file failed to load or play — skip it, but stop after N failures
   useEffect(() => {
-    engine.setOnDurationChanged((id, d) => setLiveDuration({ id, d }));
     engine.setOnAudioError(() => {
-      // a local file failed to load or play — give up on it and move on
-      setPlaying(false);
-      setIndex(pickNextIndex(1));
+      requestPlay();
+      const willContinue = reportError();
+      if (!willContinue) {
+        pause();
+        setNotice("Several tracks in your library could not be played.");
+      }
     });
     return () => {
-      engine.setOnDurationChanged(null);
       engine.setOnAudioError(null);
     };
-  }, [engine, pickNextIndex]);
+  }, [engine, pause, requestPlay, reportError]);
 
-  // rAF position loop
-  useEffect(() => {
-    if (!playing) return;
-    let raf = 0;
-    const loop = () => {
-      setPosition(engine.position);
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [engine, playing]);
+  const next = useCallback(() => {
+    requestPlay();
+    setPlaying(false);
+    advance(1);
+  }, [advance, requestPlay, setPlaying]);
 
-  const seek = useCallback(
-    (t: number) => {
-      engine.seek(t);
-      setPosition(t);
-    },
-    [engine],
-  );
+  const prev = useCallback(() => {
+    if (engine.position > 3) {
+      seek(0);
+      return;
+    }
+    requestPlay();
+    setPlaying(false);
+    advance(-1);
+  }, [advance, engine.position, requestPlay, seek, setPlaying]);
 
   const changeVolume = useCallback(
     (v: number) => {
-      setVolume(v);
-      engine.setVolume(v);
-      if (v > 0 && muted) {
+      const clamped = Math.min(1, Math.max(0, v));
+      setVolume(clamped);
+      engine.setVolume(clamped);
+      if (clamped > 0 && muted) {
         setMuted(false);
         engine.setMuted(false);
       }
-      localStorage.setItem("aether:volume", String(v));
     },
-    [engine, muted],
+    [engine, muted, setMuted, setVolume],
   );
 
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       engine.setMuted(!m);
-      localStorage.setItem("aether:muted", m ? "0" : "1");
       return !m;
     });
-  }, [engine]);
+  }, [engine, setMuted]);
 
-  const toggleLike = useCallback((id: string) => {
-    if (!id) return;
-    setLiked((prevSet) => {
-      const s = new Set(prevSet);
-      if (s.has(id)) s.delete(id);
-      else s.add(id);
-      localStorage.setItem("aether:liked", JSON.stringify([...s]));
-      return s;
-    });
-  }, []);
-
-  const cycleRepeat = useCallback(() => {
-    setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
-  }, []);
+  const toggleLike = useCallback(
+    (id: string) => {
+      if (!id) return;
+      setLiked((prevSet) => {
+        const s = new Set(prevSet);
+        if (s.has(id)) s.delete(id);
+        else s.add(id);
+        return s;
+      });
+    },
+    [setLiked],
+  );
 
   const toggleImmersive = useCallback(() => setImmersive((v) => !v), []);
 
-  // library panel: play a local track (append to the queue if needed)
-  const playNow = useCallback((t: PlayerTrack) => {
-    const q = queueRef.current;
-    const i = q.findIndex((x) => x.id === t.id);
-    pendingPlay.current = true;
-    if (i >= 0) {
-      setIndex(i);
-    } else {
-      setQueue([...q, t]);
-      setIndex(q.length);
-    }
-  }, []);
+  /** Playing a library track should start audio, not just select it. */
+  const playLibraryTrack = useCallback(
+    (t: PlayerTrack) => {
+      requestPlay();
+      setPlaying(false);
+      playNow(t);
+    },
+    [playNow, requestPlay, setPlaying],
+  );
 
+  /** Library track removed: keep the index pointing at the same logical track. */
   const removeLibraryTrack = useCallback(
     (libId: string) => {
-      const q = queueRef.current;
-      const i = q.findIndex((x) => x.id === libId);
-      if (i < 0) return;
-      const cur = stateRef.current.index;
-      if (i === cur) {
+      const result = removeAt(libId);
+      if (result === -2) {
+        // the playing track was removed — stop and fall back to the first track
         engine.pause();
         setPlaying(false);
         setIndex(0);
-      } else if (i < cur) {
-        setIndex(cur - 1);
       }
-      setQueue(q.filter((x) => x.id !== libId));
     },
-    [engine],
+    [engine, removeAt, setIndex, setPlaying],
   );
 
-  // keyboard shortcuts
+  // auto-dismiss the transient notice
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
-      switch (e.key) {
-        case " ":
-          e.preventDefault();
-          toggle();
-          break;
-        case "ArrowRight":
-          e.preventDefault();
-          seek(Math.min(track.duration, engine.position + 5));
-          break;
-        case "ArrowLeft":
-          e.preventDefault();
-          seek(Math.max(0, engine.position - 5));
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          changeVolume(Math.min(1, volume + 0.05));
-          break;
-        case "ArrowDown":
-          e.preventDefault();
-          changeVolume(Math.max(0, volume - 0.05));
-          break;
-        case "n":
-        case "N":
-          next();
-          break;
-        case "p":
-        case "P":
-          prev();
-          break;
-        case "m":
-        case "M":
-          toggleMute();
-          break;
-        case "s":
-        case "S":
-          setShuffle((s) => !s);
-          break;
-        case "r":
-        case "R":
-          cycleRepeat();
-          break;
-        case "l":
-        case "L":
-          toggleLike(track.id);
-          break;
-        case "i":
-        case "I":
-          toggleImmersive();
-          break;
-        case "?":
-          setShowShortcuts((s) => !s);
-          break;
-        case "Escape":
-          setShowShortcuts(false);
-          setQueueOpen(false);
-          setImmersive(false);
-          break;
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [changeVolume, cycleRepeat, engine, next, prev, seek, toggle, toggleImmersive, toggleLike, toggleMute, track.duration, track.id, volume]);
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
+
+  // keyboard shortcuts — a declarative map, rebuilt only when handlers change
+  const shortcuts = useMemo(
+    () => ({
+      " ": toggle,
+      ArrowRight: () => seek(Math.min(displayTrack.duration, engine.position + 5)),
+      ArrowLeft: () => seek(Math.max(0, engine.position - 5)),
+      ArrowUp: () => changeVolume(volume + 0.05),
+      ArrowDown: () => changeVolume(volume - 0.05),
+      n: next,
+      N: next,
+      p: prev,
+      P: prev,
+      m: toggleMute,
+      M: toggleMute,
+      s: () => setShuffle((s) => !s),
+      S: () => setShuffle((s) => !s),
+      r: cycleRepeat,
+      R: cycleRepeat,
+      l: () => toggleLike(safeTrack.id),
+      L: () => toggleLike(safeTrack.id),
+      i: toggleImmersive,
+      I: toggleImmersive,
+      "?": () => setShowShortcuts((s) => !s),
+      Escape: () => {
+        setShowShortcuts(false);
+        setQueueOpen(false);
+        setLibraryOpen(false);
+        setImmersive(false);
+      },
+    }),
+    [
+      changeVolume,
+      cycleRepeat,
+      displayTrack.duration,
+      engine.position,
+      next,
+      prev,
+      safeTrack.id,
+      seek,
+      setShuffle,
+      toggle,
+      toggleImmersive,
+      toggleLike,
+      toggleMute,
+      volume,
+    ],
+  );
+
+  useKeyboardShortcuts(shortcuts);
 
   // OS media session integration
   useEffect(() => {
     if (!("mediaSession" in navigator)) return;
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: track.title,
-      artist: isLocal(track) ? track.artist : "AETHER Engine",
-      album: track.album,
+      title: safeTrack.title,
+      artist: isLocal(safeTrack) ? safeTrack.artist : "AETHER Engine",
+      album: safeTrack.album,
     });
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
     try {
@@ -374,15 +345,17 @@ export default function MusicPlayer() {
     } catch {
       /* unsupported action */
     }
-  }, [next, pause, play, playing, prev, track, track.album, track.title]);
+  }, [next, pause, play, playing, prev, safeTrack]);
   const queuePanel = (
     <QueueList
       tracks={queue}
-      currentId={track.id}
+      currentId={safeTrack.id}
       playing={playing}
       liked={liked}
       onSelect={(i) => {
-        setIndex(i);
+        // an explicit user pick is not a failed skip — use `select` so it
+        // clears any consecutive-error streak
+        select(i);
         setQueueOpen(false);
       }}
       onToggleLike={toggleLike}
@@ -393,7 +366,7 @@ export default function MusicPlayer() {
     <div className="relative flex min-h-dvh flex-col overflow-hidden bg-[#050507] text-zinc-200">
       {/* track-colored ambient background */}
       <div
-        key={track.id}
+        key={safeTrack.id}
         className="fade-bg pointer-events-none absolute inset-0"
         style={{
           background: `radial-gradient(55% 45% at 18% 8%, ${palette[0]}24, transparent 65%), radial-gradient(45% 40% at 85% 25%, ${palette[1]}1e, transparent 60%), radial-gradient(50% 45% at 50% 100%, ${palette[2]}17, transparent 65%)`,
@@ -463,7 +436,7 @@ export default function MusicPlayer() {
           <div className="relative aspect-square w-full max-w-[420px]">
             {/* track-change shockwave */}
             <div
-              key={track.id}
+              key={safeTrack.id}
               aria-hidden="true"
               className="pulse-ring pointer-events-none absolute inset-0 rounded-full"
               style={{ background: `radial-gradient(circle, ${palette[1]}40 0%, transparent 60%)` }}
@@ -471,15 +444,15 @@ export default function MusicPlayer() {
             <Visualizer analyser={analyserNode} playing={playing} colors={palette} />
           </div>
           <div
-            key={`info-${track.id}`}
+            key={`info-${safeTrack.id}`}
             className={`track-enter mt-6 transition-all duration-500 ${immersive ? "pointer-events-none opacity-0" : ""}`}
           >
-            {isLocal(track) ? (
+            {isLocal(safeTrack) ? (
               <>
                 <p className="mb-2 text-[11px] tracking-[0.3em] text-zinc-500 uppercase">
-                  {track.artist} · {track.album}
+                  {safeTrack.artist} · {safeTrack.album}
                 </p>
-                <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">{track.title}</h2>
+                <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">{safeTrack.title}</h2>
                 <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[11px] text-zinc-500">
                   <span className="relative flex h-1.5 w-1.5">
                     <span
@@ -494,10 +467,10 @@ export default function MusicPlayer() {
             ) : (
               <>
                 <p className="mb-2 text-[11px] tracking-[0.3em] text-zinc-500 uppercase">
-                  {track.album} · {track.mood} · {track.bpm} bpm
+                  {safeTrack.album} · {safeTrack.mood} · {safeTrack.bpm} bpm
                 </p>
-                <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">{track.title}</h2>
-                <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-zinc-500">{track.blurb}</p>
+                <h2 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">{safeTrack.title}</h2>
+                <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-zinc-500">{safeTrack.blurb}</p>
                 <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[11px] text-zinc-500">
                   <span className="relative flex h-1.5 w-1.5">
                     <span
@@ -544,6 +517,17 @@ export default function MusicPlayer() {
         </button>
       )}
 
+      {/* transient notices (e.g. consecutive playback failures) */}
+      {notice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="toast fixed bottom-28 left-1/2 z-30 -translate-x-1/2 rounded-full border border-white/10 bg-black/80 px-4 py-2 text-xs text-zinc-300 backdrop-blur-md"
+        >
+          {notice}
+        </div>
+      )}
+
       {/* transport */}
       <div
         className={`fixed inset-x-0 bottom-0 z-20 transition-all duration-500 ${
@@ -554,7 +538,7 @@ export default function MusicPlayer() {
           track={displayTrack}
           playing={playing}
           position={position}
-          liked={liked.has(track.id)}
+          liked={liked.has(safeTrack.id)}
           shuffle={shuffle}
           repeat={repeat}
           volume={volume}
@@ -563,7 +547,7 @@ export default function MusicPlayer() {
           onNext={next}
           onPrev={prev}
           onSeek={seek}
-          onLike={() => toggleLike(track.id)}
+          onLike={() => toggleLike(safeTrack.id)}
           onShuffle={() => setShuffle((s) => !s)}
           onRepeat={cycleRepeat}
           onVolume={changeVolume}
@@ -575,9 +559,9 @@ export default function MusicPlayer() {
       {libraryOpen && (
         <LibraryPanel
           onClose={() => setLibraryOpen(false)}
-          onPlay={playNow}
+          onPlay={playLibraryTrack}
           onRemoved={removeLibraryTrack}
-          currentId={track.id}
+          currentId={safeTrack.id}
         />
       )}
 

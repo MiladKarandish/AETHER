@@ -133,3 +133,36 @@ export const LibraryIcon = (p: P) => (
   </svg>
 );
 
+export const SlidersIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
+    <path d="M1 14h6M9 8h6M17 16h6" />
+  </svg>
+);
+
+export const DiceIcon = (p: P) => (
+  <svg {...base(p)}>
+    <rect x="3" y="3" width="18" height="18" rx="3" />
+    <circle cx="8.5" cy="8.5" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="15.5" cy="8.5" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="8.5" cy="15.5" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="15.5" cy="15.5" r="1.1" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const DownloadIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M12 3v12" />
+    <path d="m7 10 5 5 5-5" />
+    <path d="M5 21h14" />
+  </svg>
+);
+
+export const PlusIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M12 5v14" />
+    <path d="M5 12h14" />
+  </svg>
+);
+
