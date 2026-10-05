@@ -12,23 +12,42 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * timeout fallback, because `animationend` never fires when animations are
  * disabled or reduced).
  */
+/** Lifecycle phases for a presence-tracked overlay. */
+type Phase = "hidden" | "open" | "closing";
+
+/**
+ * Pure transition function for presence state.
+ *
+ * Modelling this as a single `phase` (rather than deriving "is closing?" from a
+ * comparison against the previous `open`) is what makes it correct: a render-phase
+ * state update invalidates any local variable it just changed, so
+ * `wasOpen === true && open === false` can never be observed on the render that
+ * needs it. Storing the phase explicitly avoids that entire class of bug.
+ */
+export function presencePhase(current: Phase, open: boolean): Phase {
+  if (open) return "open";
+  // Closing from an already-hidden element is a no-op.
+  if (current === "hidden") return "hidden";
+  return "closing";
+}
+
 export function usePresence(
   open: boolean,
   durationMs = 220,
 ): { mounted: boolean; closing: boolean } {
-  const [mounted, setMounted] = useState(open);
-  const [wasOpen, setWasOpen] = useState(open);
+  const [phase, setPhase] = useState<Phase>(() => (open ? "open" : "hidden"));
+  const [prevOpen, setPrevOpen] = useState(open);
 
   // Adjust state during render (React's documented "derive state from props"
-  // pattern) so mounting happens in the same commit as the open change, with no
-  // cascading render.
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) setMounted(true);
+  // pattern) so the phase changes in the same commit as the prop, with no
+  // cascading render. `closing` is then read from the stored phase, so it is
+  // stable across the re-render React performs for this update.
+  if (open !== prevOpen) {
+    setPrevOpen(open);
+    setPhase((current) => presencePhase(current, open));
   }
 
-  // Still on screen but `open` went false -> we're playing the exit animation.
-  const closing = wasOpen === true && open === false && mounted;
+  const closing = phase === "closing";
 
   useEffect(() => {
     if (!closing) return;
@@ -37,13 +56,13 @@ export function usePresence(
       typeof window !== "undefined" &&
       window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const timer = window.setTimeout(
-      () => setMounted(false),
+      () => setPhase("hidden"),
       reduce ? 0 : durationMs,
     );
     return () => window.clearTimeout(timer);
   }, [closing, durationMs]);
 
-  return { mounted, closing };
+  return { mounted: phase !== "hidden", closing };
 }
 
 /**
