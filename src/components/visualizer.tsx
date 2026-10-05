@@ -35,6 +35,15 @@ export default function Visualizer({ analyser, playing, colors }: Props) {
     let raf = 0;
     let w = 0;
     let h = 0;
+    // Users who ask for reduced motion get a single static frame instead of a
+    // continuously animating canvas — this is the heaviest animation in the app.
+    const motionQuery =
+      typeof window !== "undefined" && window.matchMedia
+        ? window.matchMedia("(prefers-reduced-motion: reduce)")
+        : null;
+    const prefersReduced = () => motionQuery?.matches ?? false;
+    // Also stop drawing while the tab is hidden, to save battery.
+    let visible = typeof document === "undefined" || !document.hidden;
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -61,8 +70,17 @@ export default function Visualizer({ analyser, playing, colors }: Props) {
     let rot = 0;
     let level = 0.1;
 
-    const draw = () => {
+    // Under `prefers-reduced-motion` we draw a single static frame and never
+    // schedule another; otherwise this is the normal animation loop.
+    const startLoop = () => {
+      if (raf) return;
       raf = requestAnimationFrame(draw);
+    };
+
+    const draw = () => {
+      raf = 0;
+      if (!visible) return;
+      // frame the animation below
       const { analyser: an, playing: isPlaying, colors: cols } = propsRef.current;
       const [c1, c2, c3] = cols.map(hexToRgb);
       ctx.clearRect(0, 0, w, h);
@@ -173,11 +191,43 @@ export default function Visualizer({ analyser, playing, colors }: Props) {
       ctx.strokeStyle = rgba(c2, 0.1);
       ctx.lineWidth = 1;
       ctx.stroke();
+
+      // Schedule the next frame unless the user prefers reduced motion, in
+      // which case this single frame is all they get.
+      if (!prefersReduced()) raf = requestAnimationFrame(draw);
     };
-    draw();
+
+    // Restart on tab visibility changes, and when the motion preference flips.
+    const onVisibility = () => {
+      visible = !document.hidden;
+      if (visible) startLoop();
+      else if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+    };
+    const onMotionChange = () => {
+      if (prefersReduced()) {
+        if (raf) {
+          cancelAnimationFrame(raf);
+          raf = 0;
+        }
+        draw(); // one representative still frame
+      } else {
+        startLoop();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    motionQuery?.addEventListener("change", onMotionChange);
+    startLoop();
+
     return () => {
-      cancelAnimationFrame(raf);
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
       ro.disconnect();
+      document.removeEventListener("visibilitychange", onVisibility);
+      motionQuery?.removeEventListener("change", onMotionChange);
     };
   }, []);
 

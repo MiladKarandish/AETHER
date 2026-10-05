@@ -183,6 +183,21 @@ Bound in `src/hooks/use-keyboard-shortcuts.ts` and listed in the in-app panel to
 ## Player features
 
 - **Queue** mixing generative and library tracks in one list (`queue-list.tsx`).
+- **Queue editing** — drag the handle to reorder (pointer-based, so it works on
+  touch) and remove entries with the × on each row. Removing a library track also
+  deletes it from the library.
+- **Mixer** — six independently levelable instrument stems (pads, plucks, bass,
+  kick, snare, hats), each with a mute toggle, backed by `engine.setStemGain()`.
+  Levels persist. Generated tracks only; an imported file is already mixed.
+- **Score view** — the generated score drawn as instrument lanes under the track
+  (`score-view.tsx`), showing exactly which events produced the sound. Tapping it
+  seeks. This is the machinery the project is built on, made visible.
+- **Remix** — `remixTrack()` re-seeds the current track, keeping its title and
+  palette but producing new music. Bound to <kbd>E</kbd>.
+- **Shareable links** — because composition is deterministic, a track id plus its
+  variation reproduces a piece exactly, so the URL alone is enough:
+  `?t=tidal-memory#v3` plays the same audio on any machine. **Share** copies it,
+  or opens the native share sheet where available.
 - **Transport** with scrubbable seek bar, shuffle, three repeat modes, and likes
   (`transport.tsx`). Previous restarts the track if you're past 3 s in, otherwise it steps
   back — the standard behaviour. Switching tracks never interrupts playback: the engine hook
@@ -190,15 +205,32 @@ Bound in `src/hooks/use-keyboard-shortcuts.ts` and listed in the in-app panel to
 - **Shuffle** walks a stable Fisher–Yates permutation and remembers the last few tracks
   played, so it can't ping-pong A → B → A. Shuffle and repeat mode persist across reloads.
 - **Visualizer** — a canvas radial spectrum with a rotating, bass-reactive ring
-  (`visualizer.tsx`). It reads the engine's `AnalyserNode` directly.
+  (`visualizer.tsx`). It reads the engine's `AnalyserNode` directly, honours
+  `prefers-reduced-motion`, and stops drawing while the tab is hidden.
 - **Media Session API** integration, so lock-screen and headset controls report the current
   title and album.
-- **Per-instrument mixer** — the six stems are independently levelable via
-  `engine.setStemGain()`, and levels persist.
 - **Resilient local playback** — if an imported file won't load, the player skips it and
   stops after three consecutive failures with a visible notice rather than looping forever.
 - **Persisted settings** — volume, mute, likes, shuffle, repeat mode, mixer levels, and last
   index in `localStorage`.
+
+## Offline / PWA
+
+AETHER is installable and works with no network. Generated tracks are pure
+computation and imported tracks live in OPFS, so once the shell is cached the
+whole player is offline-capable.
+
+- `public/manifest.webmanifest` — installability metadata, icons, and shortcuts.
+- `public/sw.js` — **network-first** for HTML so an online user always gets the
+  current build (a cache-first HTML handler would pin users to a dead deploy),
+  **cache-first** only for content-hashed `/_next/static/` assets, and no
+  interception of RSC payloads, range requests, or `blob:` URLs. Two cache
+  generations are retained so a tab open across a deploy doesn't 404 into a white
+  screen.
+- Registration is production-only (`src/components/pwa-register.tsx`) so the worker
+  never fights HMR in development.
+
+Bump `CACHE_VERSION` in `sw.js` when the shell changes materially.
 
 ## Mobile
 
@@ -230,12 +262,16 @@ src/
     queue-list.tsx        the queue
     visualizer.tsx        canvas radial spectrum
     library-panel.tsx     offline library browser (import, search, repair)
+    mixer-panel.tsx      per-instrument stem mixer
+    score-view.tsx       canvas timeline of the generated score
+    pwa-register.tsx     production-only service worker registration
     icons.tsx             inline SVG icon set
   hooks/
-    use-player-queue.ts   queue, index, shuffle order, repeat, error handling
-    use-audio-engine.ts   AudioEngine lifecycle + transport state
+    use-player-queue.ts   queue, index, shuffle order, repeat, reordering, errors
+    use-audio-engine.ts   AudioEngine lifecycle + transport state + stem mixer
     use-persistent-state.ts  localStorage-backed state with validation
-    use-keyboard-shortcuts.ts  declarative key bindings + dialog dismissal
+    use-keyboard-shortcuts.ts  key bindings, dialog dismissal, swipe, scroll lock
+    use-shareable-track.ts ?t= URL parsing and native sharing
   lib/
     tracks.ts             TRACKS, SCALES, mulberry32, compose(), composeCached()
     engine.ts             AudioEngine — scheduler, synth voices, stems, reverb, analyser

@@ -193,5 +193,18 @@ export function useStems(engine: AudioEngine) {
     [engine],
   );
 
-  return { gains, setStem };
+  /** Restore every stem to unity gain. */
+  const resetStems = useCallback(() => {
+    for (const stem of Object.keys(gains) as Stem[]) {
+      engine.setStemGain(stem, 1);
+    }
+    setGains(engine.getStemGains());
+    try {
+      localStorage.removeItem("aether:stems");
+    } catch {
+      /* storage unavailable */
+    }
+  }, [engine, gains]);
+
+  return { gains, setStem, resetStems };
 }

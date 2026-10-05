@@ -128,6 +128,25 @@ export function usePlayerQueue(initial: PlayerTrack[]) {
     setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"));
   }, []);
 
+  /** Move a queue entry, keeping the index pointing at the same playing track. */
+  const move = useCallback((from: number, to: number) => {
+    const q = queueRef.current;
+    if (from === to || from < 0 || to < 0 || from >= q.length || to >= q.length) return;
+    setQueue((prev) => {
+      const next = [...prev];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+    // Keep "now playing" on the same track after the shuffle of positions.
+    setIndex((prevIdx) => {
+      if (prevIdx === from) return to;
+      if (from < prevIdx && to >= prevIdx) return prevIdx - 1;
+      if (from > prevIdx && to <= prevIdx) return prevIdx + 1;
+      return prevIdx;
+    });
+  }, []);
+
   /** Append a track if missing and select it (used by the library panel). */
   const playNow = useCallback((t: PlayerTrack) => {
     const q = queueRef.current;
@@ -181,6 +200,7 @@ export function usePlayerQueue(initial: PlayerTrack[]) {
     cycleRepeat,
     playNow,
     removeAt,
+    move,
     mergeLibrary,
     queueRef,
     indexRef,

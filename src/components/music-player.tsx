@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TRACKS } from "@/lib/tracks";
+import { TRACKS, remixTrack, variationOf } from "@/lib/tracks";
 import { isLocal, type PlayerTrack } from "@/lib/local-track";
 import { listLibrary, revokeLibraryUrls } from "@/lib/library";
 import { usePlayerQueue } from "@/hooks/use-player-queue";
@@ -13,11 +13,14 @@ import {
   usePersistentState,
 } from "@/hooks/use-persistent-state";
 import { useKeyboardShortcuts, useScrollLock, useSwipeToDismiss } from "@/hooks/use-keyboard-shortcuts";
+import { useShareableTrack } from "@/hooks/use-shareable-track";
 import Visualizer from "./visualizer";
 import QueueList from "./queue-list";
 import Transport, { type RepeatMode } from "./transport";
 import LibraryPanel from "./library-panel";
-import { CloseIcon, KeyboardIcon, LibraryIcon, WaveIcon } from "./icons";
+import MixerPanel from "./mixer-panel";
+import ScoreView from "./score-view";
+import { CloseIcon, DiceIcon, DownloadIcon, KeyboardIcon, LibraryIcon, SlidersIcon, WaveIcon } from "./icons";
 
 const SHORTCUTS: [string, string][] = [
   ["Space", "Play / pause"],
@@ -28,6 +31,8 @@ const SHORTCUTS: [string, string][] = [
   ["S", "Shuffle"],
   ["R", "Repeat mode"],
   ["L", "Like current track"],
+  ["E", "Remix current track"],
+  ["X", "Toggle the mixer"],
   ["I", "Immersive mode"],
   ["Esc", "Exit immersive / close panels"],
   ["?", "Toggle this panel"],
@@ -55,6 +60,7 @@ export default function MusicPlayer() {
     cycleRepeat,
     playNow,
     removeAt,
+    move,
     mergeLibrary,
     queueRef,
     indexRef,
@@ -75,7 +81,31 @@ export default function MusicPlayer() {
     seek,
   } = useAudioEngine(safeTrack);
 
-  useStems(engine);
+  const { gains: stemGains, setStem, resetStems } = useStems(engine);
+  const [mixerOpen, setMixerOpen] = useState(false);
+  const [scoreView, setScoreView] = useState(false);
+
+  // A `?t=` param selects the initial track; `share()` writes it back.
+  const hydrateFromUrl = useCallback(
+    (t: PlayerTrack) => {
+      select(0);
+      playNow(t);
+    },
+    [playNow, select],
+  );
+  const { share } = useShareableTrack(
+    isLocal(safeTrack) ? undefined : safeTrack,
+    hydrateFromUrl,
+  );
+
+  const doShare = useCallback(async () => {
+    const ok = await share();
+    setNotice(
+      ok
+        ? "Link copied — this track's score is reproducible from the URL."
+        : "Couldn't copy the link.",
+    );
+  }, [share]);
 
   const [volume, setVolume] = usePersistentState("aether:volume", 0.8, reviveNumber);
   const [muted, setMuted] = usePersistentState("aether:muted", false, reviveFlag);
@@ -271,6 +301,26 @@ export default function MusicPlayer() {
     [engine, removeAt, setIndex, setPlaying],
   );
 
+  /** Remove any queue entry. For library tracks this also deletes the file. */
+  const removeFromQueue = useCallback(
+    (i: number) => {
+      const t = queueRef.current[i];
+      if (!t) return;
+      if (isLocal(t)) {
+        // Removing a library track means removing it from the library too.
+        removeLibraryTrack(t.id);
+        return;
+      }
+      const result = removeAt(t.id);
+      if (result === -2) {
+        engine.pause();
+        setPlaying(false);
+        setIndex(0);
+      }
+    },
+    [engine, queueRef, removeAt, removeLibraryTrack, setIndex, setPlaying],
+  );
+
   // auto-dismiss the transient notice
   useEffect(() => {
     if (!notice) return;
@@ -278,11 +328,28 @@ export default function MusicPlayer() {
     return () => window.clearTimeout(t);
   }, [notice]);
 
+  /** Remix the current generated track: same title/palette, new seed. */
+  const remixCurrent = useCallback(() => {
+    if (safeTrack.kind === "local") return;
+    const nextVariation = variationOf(safeTrack.id) + 1;
+    requestPlay();
+    setPlaying(false);
+    playNow(remixTrack(safeTrack, nextVariation));
+  }, [playNow, requestPlay, safeTrack, setPlaying]);
+
   // Mobile drawer gestures, and stop the page scrolling behind open overlays.
   const closeQueue = useCallback(() => setQueueOpen(false), []);
   const { sheetRef: queueSheetRef, onTouchStart: qTouchStart, onTouchMove: qTouchMove, onTouchEnd: qTouchEnd, onTouchCancel: qTouchCancel } =
     useSwipeToDismiss(closeQueue);
-  useScrollLock(queueOpen || libraryOpen || showShortcuts);
+  useScrollLock(queueOpen || libraryOpen || showShortcuts || mixerOpen);
+
+  // Reflect the playing track in the tab title so it stays visible when the
+  // window is backgrounded or minimised. Generated tracks have no `artist`,
+  // so fall back to the album.
+  useEffect(() => {
+    const subtitle = isLocal(safeTrack) ? safeTrack.artist : safeTrack.album;
+    document.title = `${safeTrack.title} · ${subtitle} — AETHER`;
+  }, [safeTrack]);
 
   // keyboard shortcuts — a declarative map, rebuilt only when handlers change
   const shortcuts = useMemo(
@@ -306,11 +373,16 @@ export default function MusicPlayer() {
       L: () => toggleLike(safeTrack.id),
       i: toggleImmersive,
       I: toggleImmersive,
+      x: () => setMixerOpen((v) => !v),
+      X: () => setMixerOpen((v) => !v),
+      e: remixCurrent,
+      E: remixCurrent,
       "?": () => setShowShortcuts((s) => !s),
       Escape: () => {
         setShowShortcuts(false);
         setQueueOpen(false);
         setLibraryOpen(false);
+        setMixerOpen(false);
         setImmersive(false);
       },
     }),
@@ -321,6 +393,7 @@ export default function MusicPlayer() {
       engine.position,
       next,
       prev,
+      remixCurrent,
       safeTrack.id,
       seek,
       setShuffle,
@@ -365,6 +438,8 @@ export default function MusicPlayer() {
         setQueueOpen(false);
       }}
       onToggleLike={toggleLike}
+      onMove={move}
+      onRemove={removeFromQueue}
     />
   );
 
@@ -421,6 +496,18 @@ export default function MusicPlayer() {
           >
             Queue
           </button>
+          {/* Per-instrument mixer — only meaningful for generated tracks, since imported
+              files arrive as a single already-mixed stream. */}
+          {!isLocal(safeTrack) && (
+            <button
+              type="button"
+              onClick={() => setMixerOpen(true)}
+              aria-label="Open mixer"
+              className="tap-target rounded-full p-2 text-zinc-500 transition-colors hover:text-white"
+            >
+              <SlidersIcon width={17} height={17} />
+            </button>
+          )}
           {/* No physical keyboard on phones, so the shortcut reference is
               desktop-only chrome. */}
           <button
@@ -497,6 +584,54 @@ export default function MusicPlayer() {
                   </span>
                   synthesized live in your browser — no audio files
                 </p>
+                {/* Remix is only possible for generated tracks, and share is
+                    most useful for them too (the URL reproduces the score). */}
+                {!isLocal(safeTrack) && (
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={remixCurrent}
+                      className="tap-target inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-zinc-400 transition-colors hover:border-white/25 hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+                    >
+                      <DiceIcon width={13} height={13} />
+                      Remix
+                    </button>
+                    <button
+                      type="button"
+                      onClick={doShare}
+                      className="tap-target inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[11px] text-zinc-400 transition-colors hover:border-white/25 hover:text-white focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none"
+                    >
+                      <DownloadIcon width={13} height={13} />
+                      Share
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScoreView((v) => !v)}
+                      aria-pressed={scoreView}
+                      className={`tap-target rounded-full border px-3 py-1.5 text-[11px] transition-colors focus-visible:ring-1 focus-visible:ring-white/30 focus-visible:outline-none ${
+                        scoreView
+                          ? "border-white/25 text-white"
+                          : "border-white/10 text-zinc-400 hover:border-white/25 hover:text-white"
+                      }`}
+                    >
+                      Score
+                    </button>
+                  </div>
+                )}
+                {/* The composed score, drawn as instrument lanes. Generated
+                    tracks only — an imported file has no ScoreEvent data. */}
+                {!isLocal(safeTrack) && (
+                  <div className="mt-4 w-full max-w-md">
+                    <ScoreView
+                      track={safeTrack}
+                      position={position}
+                      duration={displayTrack.duration}
+                      playing={playing}
+                      visible={scoreView}
+                      onSeek={seek}
+                    />
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -601,6 +736,16 @@ export default function MusicPlayer() {
           onPlay={playLibraryTrack}
           onRemoved={removeLibraryTrack}
           currentId={safeTrack.id}
+        />
+      )}
+
+      {/* mixer */}
+      {mixerOpen && (
+        <MixerPanel
+          gains={stemGains}
+          onChange={setStem}
+          onReset={resetStems}
+          onClose={() => setMixerOpen(false)}
         />
       )}
 

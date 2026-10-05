@@ -204,6 +204,13 @@ export function compose(track: Track): ScoreEvent[] {
     return 1;
   };
 
+  // Octave roots for each voice, all on C so that `deg()` (which returns
+  // semitone offsets within the mode) yields actual scale tones. A non-C base
+  // here would transpose every voice out of the track's declared key.
+  const PAD_ROOT = 48; // C3
+  const BASS_ROOT = 36; // C2
+  const PLUCK_ROOT = 60; // C4
+
   for (let b = 0; b < bars; b++) {
     const t0 = b * barLen;
     const energy = energyAt(b);
@@ -217,20 +224,22 @@ export function compose(track: Track): ScoreEvent[] {
       events.push({
         t: t0 + rnd() * 0.08,
         d: barLen * 1.08,
-        f: midi(50 + track.root + deg(cd)),
+        f: midi(PAD_ROOT + track.root + deg(cd)),
         i: "pad",
         v: 0.5 + 0.1 * rnd(),
       });
     }
     // BASS
     if (energy >= 0.45) {
-      const rootMidi = 33 + track.root + deg(d);
+      const rootMidi = BASS_ROOT + track.root + deg(d);
       events.push({ t: t0, d: spb * 1.7, f: midi(rootMidi), i: "bass", v: 0.8 });
       if (energy >= 1 && rnd() < 0.7) {
+        // Step to the fifth of the chord (a scale degree, not a hardcoded +7
+        // semitones) so the bass stays inside the mode for every scale.
         events.push({
           t: t0 + spb * 2.5,
           d: spb * 0.9,
-          f: midi(rootMidi + (rnd() < 0.3 ? 7 : 0)),
+          f: midi(rnd() < 0.3 ? BASS_ROOT + track.root + deg(d + 4) : rootMidi),
           i: "bass",
           v: 0.6,
         });
@@ -250,7 +259,7 @@ export function compose(track: Track): ScoreEvent[] {
         events.push({
           t,
           d: spb * 0.55,
-          f: midi(57 + track.root + deg(nd) + oct),
+          f: midi(PLUCK_ROOT + track.root + deg(nd) + oct),
           i: "pluck",
           v: 0.35 + rnd() * 0.4,
         });
